@@ -8,8 +8,9 @@ import { exampleNodeInfo } from './types/node-info.ts';
 import { examplePeerProbe } from './types/peer-probe.ts';
 import { exampleNetworkTopology } from './types/network-topology.ts';
 import { defaultNetworkConfig } from './types/network-config.ts';
+import { NetworkManager } from './network-manager.ts';
 
-export const example = () => {
+export const example = async () => {
   const l = console.log;
   const h1 = (text: string) => l(`${text}`);
   const h2 = (text: string) => l(`  ${text}`);
@@ -30,6 +31,31 @@ export const example = () => {
   h1('NetworkConfig');
   h2('Default configuration with broadcast enabled');
   p(JSON.stringify(defaultNetworkConfig('office-sync', 3000), null, 2));
+
+  h1('NetworkManager');
+  h2('Start with static hub → manual override → revert');
+
+  const config = {
+    ...defaultNetworkConfig('office-sync', 3000),
+    static: { hubAddress: '192.168.1.100:3000' },
+  };
+  const manager = new NetworkManager(config);
+
+  manager.on('role-changed', (e) => {
+    p(`Role changed: ${e.previous} → ${e.current}`);
+  });
+
+  await manager.start();
+  p(`Topology: role=${manager.getTopology().myRole}, formedBy=${manager.getTopology().formedBy}`);
+
+  manager.assignHub('custom-hub');
+  p(`After manual override: formedBy=${manager.getTopology().formedBy}`);
+
+  manager.clearOverride();
+  p(`After clearing override: formedBy=${manager.getTopology().formedBy}`);
+
+  await manager.stop();
+  p('Manager stopped');
 };
 
 /*

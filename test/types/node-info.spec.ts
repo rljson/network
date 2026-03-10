@@ -11,9 +11,7 @@ import type { NodeInfo, NodeId } from '../../src/types/node-info';
 
 describe('NodeInfo', () => {
   it('exampleNodeInfo has all required fields', () => {
-    expect(exampleNodeInfo.nodeId).toBe(
-      'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-    );
+    expect(exampleNodeInfo.nodeId).toBe('a1b2c3d4-e5f6-7890-abcd-ef1234567890');
     expect(exampleNodeInfo.hostname).toBe('WORKSTATION-7');
     expect(exampleNodeInfo.localIps).toEqual(['192.168.1.42']);
     expect(exampleNodeInfo.domain).toBe('office-sync');

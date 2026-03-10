@@ -21,12 +21,12 @@ pnpm add @rljson/network
 
 ## Key Concepts
 
-| Concept         | Description                                                      |
-| --------------- | ---------------------------------------------------------------- |
-| **Domain**      | Groups nodes that should discover each other (not a DNS domain)  |
-| **Hub**         | Central node elected automatically — all others are clients      |
-| **Discovery**   | Fallback cascade: Broadcast → Cloud → Static + Manual override   |
-| **Hub Election**| Incumbent advantage + earliest `startedAt` timestamp wins        |
+| Concept          | Description                                                     |
+| ---------------- | --------------------------------------------------------------- |
+| **Domain**       | Groups nodes that should discover each other (not a DNS domain) |
+| **Hub**          | Central node elected automatically — all others are clients     |
+| **Discovery**    | Fallback cascade: Broadcast → Cloud → Static + Manual override  |
+| **Hub Election** | Incumbent advantage + earliest `startedAt` timestamp wins       |
 
 ## Types
 
@@ -138,6 +138,115 @@ console.log(identity.localIps);  // ['192.168.1.42']
 
 const info = identity.toNodeInfo(); // Plain NodeInfo object
 ```
+
+## Discovery Layers
+
+All layers implement the `DiscoveryLayer` interface:
+
+```typescript
+import type { DiscoveryLayer } from '@rljson/network';
+// Methods: start(), stop(), isActive(), getPeers(), getAssignedHub(), on(), off()
+```
+
+### ManualLayer
+
+Always-present manual override. Cannot be disabled:
+
+```typescript
+import { ManualLayer } from '@rljson/network';
+
+const manual = new ManualLayer();
+await manual.start(identity);
+
+manual.assignHub('specific-node-id');   // Force a hub
+manual.clearOverride();                 // Return to cascade
+```
+
+### StaticLayer
+
+Last-resort fallback — reads a hardcoded hub address from config:
+
+```typescript
+import { StaticLayer } from '@rljson/network';
+
+const staticLayer = new StaticLayer({ hubAddress: '192.168.1.100:3000' });
+const started = await staticLayer.start(identity);
+// started = true (has config), creates synthetic peer for hub
+
+const noConfig = new StaticLayer();
+const started2 = await noConfig.start(identity);
+// started2 = false (no hubAddress configured)
+```
+
+## PeerTable
+
+Merged view of all peers from all discovery layers. Deduplicates by nodeId:
+
+```typescript
+import { PeerTable } from '@rljson/network';
+
+const table = new PeerTable();
+table.setSelfId(identity.nodeId);
+
+table.attachLayer(staticLayer);    // Import peers + subscribe to events
+table.attachLayer(manualLayer);
+
+table.on('peer-joined', (peer) => console.log('New peer:', peer.nodeId));
+table.on('peer-left', (nodeId) => console.log('Lost peer:', nodeId));
+
+console.log(table.getPeers());    // All known peers
+console.log(table.size);          // Number of peers
+```
+
+## NetworkManager
+
+Central orchestrator — starts layers, merges peer tables, applies cascade
+logic, and emits topology events:
+
+```typescript
+import { NetworkManager, defaultNetworkConfig } from '@rljson/network';
+
+const config = {
+  ...defaultNetworkConfig('office-sync', 3000),
+  static: { hubAddress: '192.168.1.100:3000' },
+};
+const manager = new NetworkManager(config);
+
+manager.on('topology-changed', (e) => {
+  console.log('Topology:', e.topology.myRole, e.topology.formedBy);
+});
+manager.on('role-changed', (e) => {
+  console.log(`Role: ${e.previous} → ${e.current}`);
+});
+manager.on('hub-changed', (e) => {
+  console.log(`Hub: ${e.previousHub} → ${e.currentHub}`);
+});
+
+await manager.start();
+
+const topology = manager.getTopology();
+// { myRole: 'client', formedBy: 'static', hubAddress: '192.168.1.100:3000', ... }
+
+// Manual override supersedes cascade
+manager.assignHub('custom-hub-id');
+// Now formedBy: 'manual'
+
+// Revert to cascade
+manager.clearOverride();
+// Back to formedBy: 'static'
+
+await manager.stop();
+```
+
+### Hub Decision Cascade
+
+The `NetworkManager` evaluates hub assignment in this order:
+
+1. **Manual override** → human knows best
+2. **Broadcast** → most autonomous (not yet implemented)
+3. **Cloud** → cross-network (not yet implemented)
+4. **Static config** → last resort
+5. **Nothing** → `myRole = 'unassigned'`
 
 ## Example
 

@@ -55,3 +55,23 @@ export {
   parseLocalIps,
   defaultNodeIdentityDeps,
 } from './identity/node-identity.ts';
+
+// Layers
+export type {
+  DiscoveryLayer,
+  DiscoveryLayerEvents,
+  DiscoveryLayerEventName,
+} from './layers/discovery-layer.ts';
+export { ManualLayer } from './layers/manual-layer.ts';
+export { StaticLayer } from './layers/static-layer.ts';
+
+// Peer Table
+export type { PeerTableEvents } from './peer-table.ts';
+export { PeerTable } from './peer-table.ts';
+
+// Network Manager
+export type {
+  NetworkManagerEvents,
+  NetworkManagerEventName,
+} from './network-manager.ts';
+export { NetworkManager } from './network-manager.ts';
