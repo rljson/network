@@ -20,11 +20,11 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "pnpx vite build && tsc && node scripts/copy-readme-to-dist.js",
-    "test": "pnpx vitest run --coverage && pnpm run lint",
+    "build": "pnpm exec vite build && tsc && node scripts/copy-readme-to-dist.js",
+    "test": "pnpm exec vitest run --coverage && pnpm run lint",
     "prebuild": "npm run test",
     "prepublishOnly": "npm run build",
-    "lint": "pnpx eslint",
+    "lint": "pnpm exec eslint",
     "updateGoldens": "cross-env UPDATE_GOLDENS=true pnpm test"
   },
   "devDependencies": {
@@ -33,7 +33,7 @@
     "@typescript-eslint/parser": "^8.46.3",
     "@vitest/coverage-v8": "^4.0.6",
     "cross-env": "^10.1.0",
-    "eslint": "^9.39.1",
+    "eslint": "~9.39.1",
     "eslint-plugin-jsdoc": "^61.1.12",
     "eslint-plugin-tsdoc": "^0.4.0",
     "globals": "^16.5.0",

@@ -34,7 +34,7 @@ importers:
         specifier: ^10.1.0
         version: 10.1.0
       eslint:
-        specifier: ^9.39.1
+        specifier: ~9.39.1
         version: 9.39.1
       eslint-plugin-jsdoc:
         specifier: ^61.1.12
