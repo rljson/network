@@ -1,9 +1,9 @@
 {
-  "name": "@rljson/template-project",
-  "version": "0.0.18",
-  "description": "Rljson template-project description",
-  "homepage": "https://github.com/rljson/template-project",
-  "bugs": "https://github.com/rljson/template-project/issues",
+  "name": "@rljson/network",
+  "version": "0.0.1",
+  "description": "Networking middle layer providing basic advertising and discovery as well as cloud fall backs and basic config.",
+  "homepage": "https://github.com/rljson/network",
+  "bugs": "https://github.com/rljson/network/issues",
   "private": false,
   "license": "MIT",
   "engines": {
@@ -11,9 +11,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rljson/template-project.git"
+    "url": "git+https://github.com/rljson/network.git"
   },
-  "main": "dist/template-project.js",
+  "main": "dist/network.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist"
