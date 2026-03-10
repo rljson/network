@@ -4,4 +4,54 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
-export { Network } from './network.ts';
+// Types
+export type { NodeId, NodeInfo } from './types/node-info.ts';
+export { exampleNodeInfo } from './types/node-info.ts';
+
+export type { PeerProbe } from './types/peer-probe.ts';
+export { examplePeerProbe } from './types/peer-probe.ts';
+
+export type {
+  NodeRole,
+  FormedBy,
+  NetworkTopology,
+} from './types/network-topology.ts';
+export {
+  nodeRoles,
+  formedByValues,
+  exampleNetworkTopology,
+} from './types/network-topology.ts';
+
+export type {
+  BroadcastConfig,
+  CloudConfig,
+  StaticConfig,
+  ProbingConfig,
+  NetworkConfig,
+} from './types/network-config.ts';
+export { defaultNetworkConfig } from './types/network-config.ts';
+
+export type {
+  TopologyChangedEvent,
+  RoleChangedEvent,
+  HubChangedEvent,
+  NetworkEventMap,
+  NetworkEventName,
+} from './types/network-events.ts';
+export {
+  networkEventNames,
+  exampleTopologyChangedEvent,
+  exampleRoleChangedEvent,
+  exampleHubChangedEvent,
+} from './types/network-events.ts';
+
+// Identity
+export type {
+  NodeIdentityDeps,
+  CreateNodeIdentityOptions,
+} from './identity/node-identity.ts';
+export {
+  NodeIdentity,
+  parseLocalIps,
+  defaultNodeIdentityDeps,
+} from './identity/node-identity.ts';
