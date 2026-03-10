@@ -10,7 +10,6 @@ import { example } from '../src/example';
 
 import { expectGolden } from './setup/goldens';
 
-
 describe('example', () => {
   it('should run without error', async () => {
     // Execute example

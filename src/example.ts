@@ -46,7 +46,9 @@ export const example = async () => {
   });
 
   await manager.start();
-  p(`Topology: role=${manager.getTopology().myRole}, formedBy=${manager.getTopology().formedBy}`);
+  p(
+    `Topology: role=${manager.getTopology().myRole}, formedBy=${manager.getTopology().formedBy}`,
+  );
 
   manager.assignHub('custom-hub');
   p(`After manual override: formedBy=${manager.getTopology().formedBy}`);

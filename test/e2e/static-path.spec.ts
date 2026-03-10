@@ -8,7 +8,10 @@ import { describe, expect, it, afterEach } from 'vitest';
 
 import { NetworkManager } from '../../src/network-manager';
 import { defaultNetworkConfig } from '../../src/types/network-config';
-import type { RoleChangedEvent, HubChangedEvent } from '../../src/types/network-events';
+import type {
+  RoleChangedEvent,
+  HubChangedEvent,
+} from '../../src/types/network-events';
 
 // .............................................................................
 

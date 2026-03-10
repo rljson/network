@@ -133,9 +133,7 @@ describe('NetworkManager', () => {
 
       const topology = manager.getTopology();
       expect(topology.myRole).toBe('client');
-      expect(topology.hubNodeId).toBe(
-        'static-hub-192.168.1.100:3000',
-      );
+      expect(topology.hubNodeId).toBe('static-hub-192.168.1.100:3000');
       expect(topology.hubAddress).toBe('192.168.1.100:3000');
       expect(topology.formedBy).toBe('static');
     });
@@ -192,9 +190,7 @@ describe('NetworkManager', () => {
 
       const topology = manager.getTopology();
       expect(topology.formedBy).toBe('static');
-      expect(topology.hubNodeId).toBe(
-        'static-hub-192.168.1.100:3000',
-      );
+      expect(topology.hubNodeId).toBe('static-hub-192.168.1.100:3000');
     });
 
     it('manual override with no static → becomes client for manual hub', async () => {

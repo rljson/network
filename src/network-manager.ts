@@ -342,10 +342,7 @@ export class NetworkManager {
     if (!this._currentHubId) return null;
 
     // If static layer provided the hub, use its raw address
-    if (
-      this._formedBy === 'static' &&
-      this._staticLayer.getHubAddress()
-    ) {
+    if (this._formedBy === 'static' && this._staticLayer.getHubAddress()) {
       return this._staticLayer.getHubAddress();
     }
 
