@@ -109,7 +109,7 @@ describe('NetworkManager', () => {
 
       const topology = manager.getTopology();
       const identity = manager.getIdentity();
-      expect(topology.nodes.has(identity.nodeId)).toBe(true);
+      expect(identity.nodeId in topology.nodes).toBe(true);
     });
 
     it('returns empty probes array', async () => {
@@ -150,7 +150,7 @@ describe('NetworkManager', () => {
       await manager.start();
 
       const topology = manager.getTopology();
-      expect(topology.nodes.has('static-hub-10.0.0.1:4000')).toBe(true);
+      expect('static-hub-10.0.0.1:4000' in topology.nodes).toBe(true);
     });
   });
 

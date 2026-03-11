@@ -90,19 +90,19 @@ export class NetworkManager {
   /**
    * Create a NetworkManager.
    * @param _config - Network configuration
-   * @param _options - Optional overrides (e.g. custom probe function)
+   * @param options - Optional overrides (e.g. custom probe function)
    */
   constructor(
     private readonly _config: NetworkConfig,
-    private readonly _options?: NetworkManagerOptions,
+    options?: NetworkManagerOptions,
   ) {
     this._staticLayer = new StaticLayer(this._config.static);
     const probingConfig = this._config.probing;
     this._probeScheduler = new ProbeScheduler({
       intervalMs: probingConfig?.intervalMs ?? 10000,
       timeoutMs: probingConfig?.timeoutMs ?? 2000,
-      probeFn: _options?.probeFn,
-      failThreshold: _options?.failThreshold,
+      probeFn: options?.probeFn,
+      failThreshold: options?.failThreshold,
     });
   }
 
@@ -226,7 +226,7 @@ export class NetworkManager {
       hubAddress: this._resolveHubAddress(),
       formedBy: this._formedBy,
       formedAt: Date.now(),
-      nodes,
+      nodes: Object.fromEntries(nodes),
       probes: this._probeScheduler.getProbes(),
       myRole: this._currentRole,
     };

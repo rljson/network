@@ -5,6 +5,7 @@
 // found in the LICENSE file in the root of this package.
 
 import { exampleNodeInfo } from './types/node-info.ts';
+import type { NodeInfo } from './types/node-info.ts';
 import { examplePeerProbe } from './types/peer-probe.ts';
 import { exampleNetworkTopology } from './types/network-topology.ts';
 import { defaultNetworkConfig } from './types/network-config.ts';
@@ -35,15 +36,31 @@ export const example = async () => {
 
   h1('HubElection');
   h2('Deterministic hub election from candidates + probes');
-  const candidates: {
-    nodeId: string;
-    startedAt: number;
-    host: string;
-    port: number;
-  }[] = [
-    { nodeId: 'node-a', startedAt: 1000, host: '10.0.0.1', port: 3000 },
-    { nodeId: 'node-b', startedAt: 900, host: '10.0.0.2', port: 3000 },
-    { nodeId: 'node-c', startedAt: 1100, host: '10.0.0.3', port: 3000 },
+  const candidates: NodeInfo[] = [
+    {
+      nodeId: 'node-a',
+      hostname: 'ws-a',
+      localIps: ['10.0.0.1'],
+      domain: 'test',
+      port: 3000,
+      startedAt: 1000,
+    },
+    {
+      nodeId: 'node-b',
+      hostname: 'ws-b',
+      localIps: ['10.0.0.2'],
+      domain: 'test',
+      port: 3000,
+      startedAt: 900,
+    },
+    {
+      nodeId: 'node-c',
+      hostname: 'ws-c',
+      localIps: ['10.0.0.3'],
+      domain: 'test',
+      port: 3000,
+      startedAt: 1100,
+    },
   ];
   const probes = [
     { ...examplePeerProbe, toNodeId: 'node-a', reachable: true },

@@ -24,7 +24,7 @@ export interface RoleChangedEvent {
 /** Emitted when the hub node changes */
 export interface HubChangedEvent {
   previousHub: string | null;
-  currentHub: string;
+  currentHub: string | null;
 }
 
 /** Map of all events emitted by NetworkManager */

@@ -43,6 +43,7 @@ The network package knows **nothing** about Io, Bs, Db, trees, hashes, or sync. 
 ### Flap Dampening
 
 ProbeScheduler uses consecutive failure counting to prevent flapping:
+
 - A peer must fail `failThreshold` consecutive probes (default: 3) before
   being declared unreachable
 - A single success resets the counter immediately
