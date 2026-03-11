@@ -1223,3 +1223,70 @@ UI button to force a specific node as hub. Clear-override button to return to au
 | 7      | 8     | Dashboard & manual override UI                                  |
 
 Epics 1–4 are pure `@rljson/network`. Epics 5–6 bridge to the application. Epics 7–8 extend the system.
+
+---
+
+## Implementation Status (as of March 2026)
+
+### What's done — `@rljson/network` v0.0.1 (published on npm)
+
+All work that belongs purely to the `@rljson/network` package is **complete**. The package is published on npm and merged to `main`.
+
+| Roadmap Epic | Status | Notes |
+|---|---|---|
+| **Epic 1** — Foundation Types & Identity | ✅ Complete | All types, NodeIdentity with persistent UUID, IP discovery |
+| **Epic 2** — Static Layer + NetworkManager | ✅ Complete | DiscoveryLayer interface, ManualLayer, StaticLayer, PeerTable, NetworkManager with cascade logic |
+| **Epic 3** — Hub Election + Probing | ✅ Complete | Deterministic election (incumbent advantage, earliest startedAt, tiebreaker), PeerProber (TCP connect), ProbeScheduler with flap dampening |
+| **Epic 4** — Broadcast Layer | ✅ Complete | UDP broadcast send/receive, self-test, peer timeout, cascade integration, E2E tests on localhost |
+| **Epic 7** — Cloud Layer (client side) | ✅ Complete | REST polling, exponential backoff, re-registration after extended downtime, cascade integration (broadcast > cloud > static) |
+| *Resilience hardening* | ✅ Complete | Lifecycle hardening (idempotent start, minimum enforcement for pollIntervalMs/maxBackoffMs/reRegisterAfterFailures), stale probe cleanup, setTimeout-chaining instead of setInterval |
+
+**Test coverage**: 340 tests, 100% across all metrics (statements, branches, functions, lines).
+
+**Note on Epic numbering**: During implementation, Epic 7 (Cloud Layer client side) was implemented as part of the `@rljson/network` package since it's a pure discovery layer. Epic 7.3 (cloud coordination backend) is deferred — the client-side CloudLayer is ready to talk to any REST endpoint that implements the expected API.
+
+### What's next — work in OTHER repositories
+
+The remaining epics live outside `@rljson/network`:
+
+| Roadmap Epic | Target Repo | Status | Description |
+|---|---|---|---|
+| **Epic 5** — Node class | `@rljson/server` | ⬜ Not started | Lifecycle orchestrator: NetworkManager → role transitions → create Server or Client depending on elected role |
+| **Epic 6** — Integration | `ds_serverless_client_server` | ⬜ Not started | Replace `sl-server` + `sl-client` with unified `sl-node`, update config schema |
+| **Epic 7.3** — Cloud backend | New service | ⬜ Not started | REST API for cross-network coordination (node registration, peer list distribution, hub assignment) |
+| **Epic 8** — Dashboard & Manual Override UI | TBD | ⬜ Not started | Web visualization + UI controls (lower priority) |
+
+### Deferred (low priority)
+
+| Item | Reason |
+|---|---|
+| R3 — Topology recomputation debounce | Low priority; current recomputation is fast enough that debouncing adds complexity without measurable benefit |
+
+### Architecture delivered
+
+```
+src/
+├── types/
+│   ├── node-info.ts              ✅  NodeInfo, NodeId
+│   ├── peer-probe.ts             ✅  PeerProbe
+│   ├── network-topology.ts       ✅  NetworkTopology, NodeRole
+│   ├── network-config.ts         ✅  NetworkConfig (broadcast, cloud, static, probing)
+│   └── network-events.ts         ✅  Event type definitions
+├── identity/
+│   └── node-identity.ts          ✅  Persistent UUID, hostname, IP discovery
+├── election/
+│   └── hub-election.ts           ✅  Deterministic hub election (pure function)
+├── probing/
+│   ├── peer-prober.ts            ✅  Real TCP connect probe via node:net
+│   └── probe-scheduler.ts        ✅  setTimeout-chaining + flap dampening + stale cleanup
+├── layers/
+│   ├── discovery-layer.ts        ✅  Interface
+│   ├── broadcast-layer.ts        ✅  Try 1: UDP broadcast discovery
+│   ├── cloud-layer.ts            ✅  Try 2: REST API cloud discovery + exponential backoff
+│   ├── static-layer.ts           ✅  Try 3: config file
+│   └── manual-layer.ts           ✅  Override: programmatic API
+├── peer-table.ts                 ✅  Merged view of all peers
+├── network-manager.ts            ✅  Main orchestrator (cascade + events)
+├── example.ts                    ✅  Runnable example
+└── index.ts                      ✅  Public API exports
+```
