@@ -69,9 +69,28 @@ export { StaticLayer } from './layers/static-layer.ts';
 export type { PeerTableEvents } from './peer-table.ts';
 export { PeerTable } from './peer-table.ts';
 
+// Election
+export type {
+  ElectionResult,
+  ElectionReason,
+} from './election/hub-election.ts';
+export { electHub } from './election/hub-election.ts';
+
+// Probing
+export type { ProbeOptions } from './probing/peer-prober.ts';
+export { probePeer } from './probing/peer-prober.ts';
+export type {
+  ProbeFn,
+  ProbeSchedulerEvents,
+  ProbeSchedulerEventName,
+  ProbeSchedulerOptions,
+} from './probing/probe-scheduler.ts';
+export { ProbeScheduler } from './probing/probe-scheduler.ts';
+
 // Network Manager
 export type {
   NetworkManagerEvents,
   NetworkManagerEventName,
+  NetworkManagerOptions,
 } from './network-manager.ts';
 export { NetworkManager } from './network-manager.ts';

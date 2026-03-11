@@ -22,6 +22,8 @@ import { NodeIdentity } from './identity/node-identity.ts';
 import { ManualLayer } from './layers/manual-layer.ts';
 import { StaticLayer } from './layers/static-layer.ts';
 import { PeerTable } from './peer-table.ts';
+import { ProbeScheduler, type ProbeFn } from './probing/probe-scheduler.ts';
+import { electHub } from './election/hub-election.ts';
 
 // .............................................................................
 
@@ -39,6 +41,17 @@ export type NetworkManagerEventName = keyof NetworkManagerEvents;
 
 type Listener = NetworkManagerEvents[NetworkManagerEventName];
 
+/** Options for NetworkManager constructor */
+export interface NetworkManagerOptions {
+  /** Custom probe function (e.g. for testing) */
+  probeFn?: ProbeFn;
+  /**
+   * Number of consecutive probe failures before declaring a peer
+   * unreachable (default: 3). Passed through to ProbeScheduler.
+   */
+  failThreshold?: number;
+}
+
 // .............................................................................
 
 /**
@@ -47,7 +60,7 @@ type Listener = NetworkManagerEvents[NetworkManagerEventName];
  * Starts all configured discovery layers, merges peer tables,
  * applies the fallback cascade, and emits topology events.
  *
- * Currently supports ManualLayer + StaticLayer (Epic 2 shell).
+ * Supports ManualLayer + StaticLayer + hub election via probing.
  * Broadcast and Cloud layers will be added in later epics.
  */
 export class NetworkManager {
@@ -63,6 +76,9 @@ export class NetworkManager {
   /** Merged peer table */
   private readonly _peerTable = new PeerTable();
 
+  /** Probe scheduler for reachability checking */
+  private readonly _probeScheduler: ProbeScheduler;
+
   /** Event listeners */
   private _listeners = new Map<string, Set<Listener>>();
 
@@ -74,9 +90,20 @@ export class NetworkManager {
   /**
    * Create a NetworkManager.
    * @param _config - Network configuration
+   * @param _options - Optional overrides (e.g. custom probe function)
    */
-  constructor(private readonly _config: NetworkConfig) {
+  constructor(
+    private readonly _config: NetworkConfig,
+    private readonly _options?: NetworkManagerOptions,
+  ) {
     this._staticLayer = new StaticLayer(this._config.static);
+    const probingConfig = this._config.probing;
+    this._probeScheduler = new ProbeScheduler({
+      intervalMs: probingConfig?.intervalMs ?? 10000,
+      timeoutMs: probingConfig?.timeoutMs ?? 2000,
+      probeFn: _options?.probeFn,
+      failThreshold: _options?.failThreshold,
+    });
   }
 
   // .........................................................................
@@ -107,10 +134,14 @@ export class NetworkManager {
     // Listen for peer changes to trigger re-evaluation
     this._peerTable.on('peer-joined', (peer) => {
       this._emit('peer-joined', peer);
+      // Update probe scheduler with new peer list
+      this._probeScheduler.setPeers(this._peerTable.getPeers());
       this._recomputeTopology();
     });
     this._peerTable.on('peer-left', (nodeId) => {
       this._emit('peer-left', nodeId);
+      // Update probe scheduler with new peer list
+      this._probeScheduler.setPeers(this._peerTable.getPeers());
       this._recomputeTopology();
     });
 
@@ -122,9 +153,21 @@ export class NetworkManager {
       this._recomputeTopology();
     });
 
+    // Listen for probe updates to trigger re-election
+    this._probeScheduler.on('probes-updated', () => {
+      this._recomputeTopology();
+    });
+
     // Start layers
     await this._manualLayer.start(this._identity);
     await this._staticLayer.start(this._identity);
+
+    // Start probe scheduler if probing is enabled
+    const probingEnabled = this._config.probing?.enabled !== false;
+    if (probingEnabled) {
+      this._probeScheduler.setPeers(this._peerTable.getPeers());
+      this._probeScheduler.start(this._identity.nodeId);
+    }
 
     this._running = true;
 
@@ -140,6 +183,7 @@ export class NetworkManager {
   async stop(): Promise<void> {
     if (!this._running) return;
 
+    this._probeScheduler.stop();
     await this._manualLayer.stop();
     await this._staticLayer.stop();
 
@@ -183,9 +227,17 @@ export class NetworkManager {
       formedBy: this._formedBy,
       formedAt: Date.now(),
       nodes,
-      probes: [],
+      probes: this._probeScheduler.getProbes(),
       myRole: this._currentRole,
     };
+  }
+
+  /**
+   * Get the probe scheduler for direct access to probe results.
+   * @returns The ProbeScheduler instance
+   */
+  getProbeScheduler(): ProbeScheduler {
+    return this._probeScheduler;
   }
 
   /**
@@ -264,7 +316,7 @@ export class NetworkManager {
    *
    * Priority:
    *   1. Manual override (human knows best)
-   *   2. [future] Broadcast peers → election (most autonomous)
+   *   2. Election among probed peers (most autonomous)
    *   3. [future] Cloud assignment (sees full picture)
    *   4. Static config (last resort)
    *   5. Nothing → unassigned
@@ -276,8 +328,26 @@ export class NetworkManager {
       return { hubId: manualHub, formedBy: 'manual' };
     }
 
-    // Try 1: Broadcast — not yet implemented (Epic 4)
-    // Try 2: Cloud — not yet implemented (Epic 5)
+    // Try 1+2: Election among probed peers
+    // If we have probe results, use election algorithm
+    const probes = this._probeScheduler.getProbes();
+    if (probes.length > 0 && this._identity) {
+      // Build candidates: self + all known peers
+      const candidates: NodeInfo[] = [
+        this._identity.toNodeInfo(),
+        ...this._peerTable.getPeers(),
+      ];
+      const result = electHub(
+        candidates,
+        probes,
+        this._currentHubId,
+        this._identity.nodeId,
+      );
+      /* v8 ignore else -- @preserve */
+      if (result.hubId) {
+        return { hubId: result.hubId, formedBy: 'election' };
+      }
+    }
 
     // Try 3: Static — last resort
     if (this._staticLayer.isActive()) {

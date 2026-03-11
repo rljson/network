@@ -30,17 +30,18 @@ describe('NetworkTopology', () => {
   });
 
   describe('formedByValues', () => {
-    it('contains all four formation sources', () => {
+    it('contains all five formation sources', () => {
       expect(formedByValues).toEqual([
         'broadcast',
         'cloud',
+        'election',
         'manual',
         'static',
       ]);
     });
 
     it('values are assignable to FormedBy', () => {
-      const formed: FormedBy = formedByValues[2];
+      const formed: FormedBy = formedByValues[3];
       expect(formed).toBe('manual');
     });
   });

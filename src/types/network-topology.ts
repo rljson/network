@@ -17,6 +17,7 @@ export type NodeRole = (typeof nodeRoles)[number];
 export const formedByValues = [
   'broadcast',
   'cloud',
+  'election',
   'manual',
   'static',
 ] as const;

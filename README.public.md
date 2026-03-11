@@ -74,7 +74,7 @@ const topo: NetworkTopology = {
   domain: 'office-sync',
   hubNodeId: 'a1b2c3d4-...',
   hubAddress: '192.168.1.42:3000',
-  formedBy: 'broadcast',         // 'broadcast' | 'cloud' | 'static' | 'manual'
+  formedBy: 'broadcast',         // 'broadcast' | 'cloud' | 'election' | 'static' | 'manual'
   formedAt: 1741123456800,
   nodes: { /* NodeInfo by nodeId */ },
   probes: [ /* PeerProbe[] */ ],
@@ -243,10 +243,92 @@ await manager.stop();
 The `NetworkManager` evaluates hub assignment in this order:
 
 1. **Manual override** → human knows best
-2. **Broadcast** → most autonomous (not yet implemented)
+2. **Election via probing** → probes determine reachable peers, election picks hub
 3. **Cloud** → cross-network (not yet implemented)
 4. **Static config** → last resort
 5. **Nothing** → `myRole = 'unassigned'`
+
+## Hub Election
+
+Pure deterministic election algorithm — no I/O, no side effects:
+
+```typescript
+import { electHub } from '@rljson/network';
+import type { ElectionResult } from '@rljson/network';
+
+const candidates = [
+  { nodeId: 'node-a', host: '10.0.0.1', port: 3000, ... startedAt: 1000 },
+  { nodeId: 'node-b', host: '10.0.0.2', port: 3000, ... startedAt: 900 },
+];
+const probes = [
+  { fromNodeId: 'self', toNodeId: 'node-a', reachable: true, latencyMs: 5, measuredAt: Date.now() },
+  { fromNodeId: 'self', toNodeId: 'node-b', reachable: true, latencyMs: 3, measuredAt: Date.now() },
+];
+
+const result: ElectionResult = electHub(candidates, probes, null, 'self');
+// result.hubId = 'node-b' (earliest startedAt)
+// result.reason = 'earliest-start'
+```
+
+Election rules:
+1. Filter candidates to reachable peers only (self is always reachable)
+2. **Incumbent advantage**: keep current hub if still reachable
+3. **Earliest `startedAt`** wins among reachable candidates
+4. **Tiebreaker**: lexicographic `nodeId` comparison
+
+## Probing
+
+### PeerProber
+
+Real TCP connect probe — tests whether a peer is reachable:
+
+```typescript
+import { probePeer } from '@rljson/network';
+
+const probe = await probePeer('192.168.1.42', 3000, 'my-node', 'peer-node');
+// { reachable: true, latencyMs: 2.45, fromNodeId: 'my-node', toNodeId: 'peer-node', ... }
+
+// With custom timeout
+const probe2 = await probePeer('10.0.0.1', 3000, 'my-node', 'remote', { timeoutMs: 500 });
+```
+
+### ProbeScheduler
+
+Periodically probes all known peers and detects state changes:
+
+```typescript
+import { ProbeScheduler } from '@rljson/network';
+
+const scheduler = new ProbeScheduler({
+  intervalMs: 5000,
+  timeoutMs: 2000,
+  failThreshold: 3,   // Consecutive failures before 'unreachable' (default: 3)
+});
+scheduler.start('my-node-id');
+scheduler.setPeers([peerA, peerB]); // NodeInfo[]
+
+scheduler.on('probes-updated', (probes) => {
+  console.log('All probe results:', probes);
+});
+scheduler.on('peer-unreachable', (nodeId, probe) => {
+  console.log(`${nodeId} went down!`);
+});
+scheduler.on('peer-reachable', (nodeId, probe) => {
+  console.log(`${nodeId} came back!`);
+});
+
+// Manual single cycle (useful for tests)
+const results = await scheduler.runOnce();
+
+scheduler.stop();
+```
+
+The `NetworkManager` creates and manages a `ProbeScheduler` internally.
+Access it via `manager.getProbeScheduler()` for advanced use.
+
+**Flap dampening**: A peer must fail `failThreshold` consecutive probes
+(default: 3) before being declared unreachable. A single success resets
+the counter immediately. This prevents flapping on transient network glitches.
 
 ## Example
 

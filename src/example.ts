@@ -9,6 +9,7 @@ import { examplePeerProbe } from './types/peer-probe.ts';
 import { exampleNetworkTopology } from './types/network-topology.ts';
 import { defaultNetworkConfig } from './types/network-config.ts';
 import { NetworkManager } from './network-manager.ts';
+import { electHub } from './election/hub-election.ts';
 
 export const example = async () => {
   const l = console.log;
@@ -31,6 +32,27 @@ export const example = async () => {
   h1('NetworkConfig');
   h2('Default configuration with broadcast enabled');
   p(JSON.stringify(defaultNetworkConfig('office-sync', 3000), null, 2));
+
+  h1('HubElection');
+  h2('Deterministic hub election from candidates + probes');
+  const candidates: {
+    nodeId: string;
+    startedAt: number;
+    host: string;
+    port: number;
+  }[] = [
+    { nodeId: 'node-a', startedAt: 1000, host: '10.0.0.1', port: 3000 },
+    { nodeId: 'node-b', startedAt: 900, host: '10.0.0.2', port: 3000 },
+    { nodeId: 'node-c', startedAt: 1100, host: '10.0.0.3', port: 3000 },
+  ];
+  const probes = [
+    { ...examplePeerProbe, toNodeId: 'node-a', reachable: true },
+    { ...examplePeerProbe, toNodeId: 'node-b', reachable: true },
+    { ...examplePeerProbe, toNodeId: 'node-c', reachable: false },
+  ];
+  const result = electHub(candidates, probes, null, 'node-a');
+  p(`Winner: ${result.hubId}, reason: ${result.reason}`);
+  p('(node-b wins: earliest startedAt among reachable peers)');
 
   h1('NetworkManager');
   h2('Start with static hub → manual override → revert');

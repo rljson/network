@@ -5,6 +5,7 @@
 // found in the LICENSE file in the root of this package.
 
 import { describe, expect, it, afterEach } from 'vitest';
+import { createServer, type Server, type AddressInfo } from 'node:net';
 
 import { NetworkManager } from '../src/network-manager';
 import { defaultNetworkConfig } from '../src/types/network-config';
@@ -15,6 +16,8 @@ import type {
   HubChangedEvent,
 } from '../src/types/network-events';
 import type { NodeInfo } from '../src/types/node-info';
+import type { ProbeFn } from '../src/probing/probe-scheduler';
+import type { PeerProbe } from '../src/types/peer-probe';
 
 // .............................................................................
 
@@ -400,6 +403,262 @@ describe('NetworkManager', () => {
 
       const topology = manager.getTopology();
       expect(topology.hubAddress).toBeNull();
+    });
+  });
+
+  // .........................................................................
+  // Probe scheduler integration
+  // .........................................................................
+
+  describe('probe scheduler', () => {
+    it('starts probe scheduler when probing is enabled', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+
+      const scheduler = manager.getProbeScheduler();
+      expect(scheduler.isRunning()).toBe(true);
+    });
+
+    it('stops probe scheduler on stop()', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+
+      const scheduler = manager.getProbeScheduler();
+      expect(scheduler.isRunning()).toBe(true);
+
+      await manager.stop();
+      expect(scheduler.isRunning()).toBe(false);
+    });
+
+    it('does not start probe scheduler when probing is disabled', async () => {
+      manager = new NetworkManager(testConfig({ probing: { enabled: false } }));
+      await manager.start();
+
+      const scheduler = manager.getProbeScheduler();
+      expect(scheduler.isRunning()).toBe(false);
+    });
+
+    it('topology includes probe results', async () => {
+      const mockProbe: ProbeFn = async (
+        _h,
+        _p,
+        fromNodeId,
+        toNodeId,
+      ): Promise<PeerProbe> => ({
+        fromNodeId,
+        toNodeId,
+        reachable: true,
+        latencyMs: 1.0,
+        measuredAt: Date.now(),
+      });
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '192.168.1.100:3000' },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        { probeFn: mockProbe },
+      );
+      await manager.start();
+
+      // Manually trigger a probe cycle
+      await manager.getProbeScheduler().runOnce();
+
+      const topology = manager.getTopology();
+      expect(topology.probes.length).toBeGreaterThan(0);
+      expect(topology.probes[0]!.toNodeId).toBe(
+        'static-hub-192.168.1.100:3000',
+      );
+    });
+
+    it('updates peers in probe scheduler when peers change', async () => {
+      manager = new NetworkManager(
+        testConfig({
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        {
+          probeFn: async (
+            _h,
+            _p,
+            fromNodeId,
+            toNodeId,
+          ): Promise<PeerProbe> => ({
+            fromNodeId,
+            toNodeId,
+            reachable: true,
+            latencyMs: 1.0,
+            measuredAt: Date.now(),
+          }),
+        },
+      );
+      await manager.start();
+
+      // No static hub → no peers initially
+      const scheduler = manager.getProbeScheduler();
+      const probes = await scheduler.runOnce();
+      expect(probes).toHaveLength(0);
+    });
+  });
+
+  // .........................................................................
+  // Hub election integration
+  // .........................................................................
+
+  describe('hub election via probing', () => {
+    it('manual override still supersedes election', async () => {
+      const mockProbe: ProbeFn = async (
+        _h,
+        _p,
+        fromNodeId,
+        toNodeId,
+      ): Promise<PeerProbe> => ({
+        fromNodeId,
+        toNodeId,
+        reachable: true,
+        latencyMs: 1.0,
+        measuredAt: Date.now(),
+      });
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '10.0.0.1:3000' },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        { probeFn: mockProbe },
+      );
+      await manager.start();
+
+      // Run probes so election data is available
+      await manager.getProbeScheduler().runOnce();
+
+      // Manual override should win over election
+      manager.assignHub('manual-hub');
+      const topology = manager.getTopology();
+      expect(topology.formedBy).toBe('manual');
+      expect(topology.hubNodeId).toBe('manual-hub');
+    });
+
+    it('election result used when probes are available', async () => {
+      const mockProbe: ProbeFn = async (
+        _h,
+        _p,
+        fromNodeId,
+        toNodeId,
+      ): Promise<PeerProbe> => ({
+        fromNodeId,
+        toNodeId,
+        reachable: true,
+        latencyMs: 1.0,
+        measuredAt: Date.now(),
+      });
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '10.0.0.1:3000' },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        { probeFn: mockProbe },
+      );
+      await manager.start();
+
+      // Run probes → election should trigger
+      await manager.getProbeScheduler().runOnce();
+
+      const topology = manager.getTopology();
+      // With probes available, election should take over
+      expect(topology.formedBy).toBe('election');
+      expect(topology.hubNodeId).toBeTruthy();
+    });
+
+    it('falls back to static when no probes available', async () => {
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '10.0.0.1:3000' },
+          probing: { enabled: false },
+        }),
+      );
+      await manager.start();
+
+      const topology = manager.getTopology();
+      expect(topology.formedBy).toBe('static');
+    });
+  });
+
+  // .........................................................................
+  // Tier 2: Real TCP integration
+  // .........................................................................
+
+  describe('Tier 2: Real TCP probing', () => {
+    const servers: Array<{ stop: () => Promise<void> }> = [];
+
+    afterEach(async () => {
+      for (const s of servers) {
+        await s.stop();
+      }
+      servers.length = 0;
+    });
+
+    /** Start a real TCP server on a random port */
+    const startTcpServer = (): Promise<{
+      port: number;
+      server: Server;
+      stop: () => Promise<void>;
+    }> => {
+      return new Promise((resolve) => {
+        const server = createServer();
+        server.listen(0, '127.0.0.1', () => {
+          const port = (server.address() as AddressInfo).port;
+          const stop = () =>
+            new Promise<void>((res) => {
+              server.close(() => res());
+            });
+          resolve({ port, server, stop });
+        });
+      });
+    };
+
+    it('probes real TCP server via NetworkManager', async () => {
+      const tcp = await startTcpServer();
+      servers.push(tcp);
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: `127.0.0.1:${tcp.port}` },
+          probing: { enabled: true, intervalMs: 60000, timeoutMs: 1000 },
+        }),
+      );
+      await manager.start();
+
+      // Run a real probe cycle
+      await manager.getProbeScheduler().runOnce();
+
+      const topology = manager.getTopology();
+      expect(topology.probes.length).toBeGreaterThan(0);
+      const probe = topology.probes[0]!;
+      expect(probe.reachable).toBe(true);
+      expect(probe.latencyMs).toBeGreaterThan(0);
+    });
+
+    it('detects unreachable static hub via real probe', async () => {
+      // Start and immediately stop to get a refused port
+      const tcp = await startTcpServer();
+      const deadPort = tcp.port;
+      await tcp.stop();
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: `127.0.0.1:${deadPort}` },
+          probing: { enabled: true, intervalMs: 60000, timeoutMs: 500 },
+        }),
+      );
+      await manager.start();
+
+      // Run a real probe cycle
+      await manager.getProbeScheduler().runOnce();
+
+      const topology = manager.getTopology();
+      const probe = topology.probes[0]!;
+      expect(probe.reachable).toBe(false);
     });
   });
 });
