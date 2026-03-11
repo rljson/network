@@ -162,6 +162,47 @@ manual.assignHub('specific-node-id');   // Force a hub
 manual.clearOverride();                 // Return to cascade
 ```
 
+### BroadcastLayer (Try 1)
+
+UDP broadcast discovery — zero-config LAN peer detection:
+
+```typescript
+import { BroadcastLayer, defaultCreateUdpSocket } from '@rljson/network';
+import type { BroadcastConfig, BroadcastLayerDeps } from '@rljson/network';
+
+const config: BroadcastConfig = {
+  enabled: true,
+  port: 41234,
+  intervalMs: 5000,   // How often to broadcast
+  timeoutMs: 15000,   // Remove peer after silence
+};
+
+const layer = new BroadcastLayer(config);
+const started = await layer.start(identity);
+// started = true if UDP broadcast is available (self-test passed)
+// started = false if broadcast blocked, disabled, or bind failed
+
+layer.on('peer-discovered', (peer) => console.log('Found:', peer.nodeId));
+layer.on('peer-lost', (nodeId) => console.log('Lost:', nodeId));
+
+console.log(layer.getPeers());        // Currently discovered peers
+console.log(layer.getAssignedHub());   // Always null (broadcast doesn't assign)
+
+await layer.stop();
+```
+
+For testing, inject a mock socket factory:
+
+```typescript
+import type { UdpSocket, CreateUdpSocket } from '@rljson/network';
+
+const deps: BroadcastLayerDeps = {
+  createSocket: myMockSocketFactory,
+  selfTestTimeoutMs: 50,
+};
+const layer = new BroadcastLayer(config, deps);
+```
+
 ### StaticLayer
 
 Last-resort fallback — reads a hardcoded hub address from config:
@@ -244,6 +285,8 @@ The `NetworkManager` evaluates hub assignment in this order:
 
 1. **Manual override** → human knows best
 2. **Election via probing** → probes determine reachable peers, election picks hub
+   - `formedBy: 'broadcast'` when broadcast layer is active with peers
+   - `formedBy: 'election'` otherwise
 3. **Cloud** → cross-network (not yet implemented)
 4. **Static config** → last resort
 5. **Nothing** → `myRole = 'unassigned'`

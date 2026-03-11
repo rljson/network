@@ -62,6 +62,16 @@ export type {
   DiscoveryLayerEvents,
   DiscoveryLayerEventName,
 } from './layers/discovery-layer.ts';
+export type {
+  UdpSocket,
+  RemoteInfo,
+  CreateUdpSocket,
+  BroadcastLayerDeps,
+} from './layers/broadcast-layer.ts';
+export {
+  BroadcastLayer,
+  defaultCreateUdpSocket,
+} from './layers/broadcast-layer.ts';
 export { ManualLayer } from './layers/manual-layer.ts';
 export { StaticLayer } from './layers/static-layer.ts';
 

@@ -19,6 +19,10 @@ import type {
   HubChangedEvent,
 } from './types/network-events.ts';
 import { NodeIdentity } from './identity/node-identity.ts';
+import {
+  BroadcastLayer,
+  type BroadcastLayerDeps,
+} from './layers/broadcast-layer.ts';
 import { ManualLayer } from './layers/manual-layer.ts';
 import { StaticLayer } from './layers/static-layer.ts';
 import { PeerTable } from './peer-table.ts';
@@ -50,6 +54,8 @@ export interface NetworkManagerOptions {
    * unreachable (default: 3). Passed through to ProbeScheduler.
    */
   failThreshold?: number;
+  /** Injectable dependencies for BroadcastLayer (e.g. mock sockets) */
+  broadcastDeps?: BroadcastLayerDeps;
 }
 
 // .............................................................................
@@ -69,6 +75,9 @@ export class NetworkManager {
 
   /** Always-present manual override layer */
   private readonly _manualLayer = new ManualLayer();
+
+  /** Try 1: UDP broadcast discovery */
+  private readonly _broadcastLayer: BroadcastLayer;
 
   /** Try 3: Static config fallback */
   private readonly _staticLayer: StaticLayer;
@@ -96,6 +105,10 @@ export class NetworkManager {
     private readonly _config: NetworkConfig,
     options?: NetworkManagerOptions,
   ) {
+    this._broadcastLayer = new BroadcastLayer(
+      this._config.broadcast,
+      options?.broadcastDeps,
+    );
     this._staticLayer = new StaticLayer(this._config.static);
     const probingConfig = this._config.probing;
     this._probeScheduler = new ProbeScheduler({
@@ -123,12 +136,14 @@ export class NetworkManager {
     this._identity = await NodeIdentity.create({
       domain: this._config.domain,
       port: this._config.port,
+      identityDir: this._config.identityDir,
     });
 
     this._peerTable.setSelfId(this._identity.nodeId);
 
     // Attach layers to peer table
     this._peerTable.attachLayer(this._manualLayer);
+    this._peerTable.attachLayer(this._broadcastLayer);
     this._peerTable.attachLayer(this._staticLayer);
 
     // Listen for peer changes to trigger re-evaluation
@@ -149,6 +164,10 @@ export class NetworkManager {
     this._manualLayer.on('hub-assigned', () => {
       this._recomputeTopology();
     });
+    // Broadcast layer never emits hub-assigned (getAssignedHub returns null),
+    // but we subscribe for completeness if the layer evolves in the future.
+    /* v8 ignore next -- @preserve */
+    this._broadcastLayer.on('hub-assigned', () => this._recomputeTopology());
     this._staticLayer.on('hub-assigned', () => {
       this._recomputeTopology();
     });
@@ -158,8 +177,9 @@ export class NetworkManager {
       this._recomputeTopology();
     });
 
-    // Start layers
+    // Start layers (cascade priority: broadcast > static)
     await this._manualLayer.start(this._identity);
+    await this._broadcastLayer.start(this._identity);
     await this._staticLayer.start(this._identity);
 
     // Start probe scheduler if probing is enabled
@@ -185,6 +205,7 @@ export class NetworkManager {
 
     this._probeScheduler.stop();
     await this._manualLayer.stop();
+    await this._broadcastLayer.stop();
     await this._staticLayer.stop();
 
     this._peerTable.clear();
@@ -317,6 +338,8 @@ export class NetworkManager {
    * Priority:
    *   1. Manual override (human knows best)
    *   2. Election among probed peers (most autonomous)
+   *      - formedBy 'broadcast' if broadcast layer provided peers
+   *      - formedBy 'election' otherwise
    *   3. [future] Cloud assignment (sees full picture)
    *   4. Static config (last resort)
    *   5. Nothing → unassigned
@@ -345,7 +368,13 @@ export class NetworkManager {
       );
       /* v8 ignore else -- @preserve */
       if (result.hubId) {
-        return { hubId: result.hubId, formedBy: 'election' };
+        // Determine formedBy: 'broadcast' if broadcast layer contributed peers
+        const formedBy: FormedBy =
+          this._broadcastLayer.isActive() &&
+          this._broadcastLayer.getPeers().length > 0
+            ? 'broadcast'
+            : 'election';
+        return { hubId: result.hubId, formedBy };
       }
     }
 

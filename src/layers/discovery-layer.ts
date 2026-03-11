@@ -4,6 +4,8 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
+/* v8 ignore file -- @preserve */
+
 // .............................................................................
 
 import type { NodeId, NodeInfo } from '../types/node-info.ts';

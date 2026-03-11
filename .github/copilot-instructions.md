@@ -48,8 +48,8 @@ ProbeScheduler uses consecutive failure counting to prevent flapping:
   being declared unreachable
 - A single success resets the counter immediately
 - First probe establishes baseline — never triggers events
-- The `FormedBy` type includes `'election'` for probing-based hub selection
-  (not `'broadcast'`)
+- The `FormedBy` type includes `'broadcast'` when broadcast layer is active
+  with peers, and `'election'` otherwise
 
 ### Target Module Structure
 
@@ -70,7 +70,7 @@ src/
 │   └── probe-scheduler.ts      // Periodic probing + change detection
 ├── layers/
 │   ├── discovery-layer.ts      // Interface
-│   ├── broadcast-layer.ts      // Try 1: UDP (not yet implemented)
+│   ├── broadcast-layer.ts      // Try 1: UDP broadcast discovery
 │   ├── cloud-layer.ts          // Try 2: REST API (not yet implemented)
 │   ├── static-layer.ts         // Try 3: config file
 │   └── manual-layer.ts         // Override: programmatic API

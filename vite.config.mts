@@ -26,6 +26,7 @@ export default defineConfig({
         '@rljson/json',
         '@rljson/hash',
         'node:crypto',
+        'node:dgram',
         'node:fs/promises',
         'node:net',
         'node:os',

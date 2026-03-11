@@ -37,6 +37,7 @@ src/
 │   └── probe-scheduler.ts      // Periodic probing + change detection
 ├── layers/
 │   ├── discovery-layer.ts      // DiscoveryLayer interface — contract for all layers
+│   ├── broadcast-layer.ts      // BroadcastLayer — UDP broadcast discovery (Try 1)
 │   ├── manual-layer.ts         // ManualLayer — always-present override
 │   └── static-layer.ts         // StaticLayer — hardcoded hub fallback (Try 3)
 ├── peer-table.ts               // PeerTable — merged view of peers from all layers
@@ -148,6 +149,37 @@ on/off          → event subscription // peer-discovered, peer-lost, hub-assign
 - `assignHub(nodeId)` / `clearOverride()` API
 - Clearing returns control to the automatic cascade
 
+### BroadcastLayer (Try 1 — Primary Discovery)
+
+UDP broadcast discovery for zero-config LAN peer detection:
+
+- **Self-test on startup**: sends a broadcast and waits for loopback reception;
+  if the self-test times out, broadcast is unavailable and the cascade falls
+  through to the next layer (cloud or static)
+- **Periodic broadcasting** at `intervalMs` (default: 5000 ms)
+- **Domain filtering**: ignores packets from nodes in a different `domain`
+- **Self-packet detection**: loopback packets are silently dropped (never
+  added to the peer table)
+- **Peer timeout**: peers that haven't been heard from within `timeoutMs`
+  (default: 15000 ms) are removed and `peer-lost` is emitted
+- **Does NOT assign hub** — `getAssignedHub()` always returns `null`.
+  Hub is elected by the NetworkManager via `electHub()` when broadcast
+  peers are available (`formedBy: 'broadcast'`)
+- **Testable via `UdpSocket` interface** — injectable socket factory
+  (`CreateUdpSocket`) for deterministic mock-based testing with
+  `MockUdpHub` / `MockUdpSocket`
+
+Configuration (`BroadcastConfig`):
+
+```typescript
+{
+  enabled: boolean;      // default: true
+  port: number;          // default: 41234
+  intervalMs?: number;   // default: 5000
+  timeoutMs?: number;    // default: 15000
+}
+```
+
 ### StaticLayer
 
 - Last resort fallback (Try 3)
@@ -171,17 +203,20 @@ Merged view of all peers from all discovery layers:
 
 Central orchestrator — the main public API:
 
-- Creates `NodeIdentity` on start
-- Starts ManualLayer + StaticLayer (Broadcast/Cloud in future epics)
+- Creates `NodeIdentity` on start (respects `identityDir` from config)
+- Starts ManualLayer, BroadcastLayer, and StaticLayer in cascade order
 - Creates and manages `ProbeScheduler` for reachability checking
 - Uses `PeerTable` for merged peer tracking
 - Applies **cascade logic** via `_computeHub()`:
   1. Manual override wins
   2. Election via probes (if probes available → `electHub()`)
+     - `formedBy: 'broadcast'` when broadcast layer is active with peers
+     - `formedBy: 'election'` otherwise
   3. (Future: Cloud assignment)
   4. Static config fallback
   5. No result → `unassigned`
-- Accepts `NetworkManagerOptions` with injectable `probeFn` for testing
+- Accepts `NetworkManagerOptions` with injectable `probeFn` and
+  `broadcastDeps` for testing
 - Emits events: `topology-changed`, `role-changed`, `hub-changed`,
   `peer-joined`, `peer-left`
 - Continuous re-evaluation: any peer/hub change or probe update triggers
