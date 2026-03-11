@@ -203,6 +203,54 @@ const deps: BroadcastLayerDeps = {
 const layer = new BroadcastLayer(config, deps);
 ```
 
+### CloudLayer (Try 2)
+
+REST-based cloud discovery fallback. The cloud service has the full picture
+and **dictates** the hub (unlike broadcast, which uses local election):
+
+```typescript
+import { CloudLayer, defaultCreateCloudHttpClient } from '@rljson/network';
+import type { CloudConfig, CloudLayerDeps, CloudHttpClient } from '@rljson/network';
+
+const config: CloudConfig = {
+  enabled: true,
+  endpoint: 'https://cloud.example.com',
+  apiKey: 'my-api-key',          // Optional Bearer token
+  pollIntervalMs: 30000,         // How often to poll (default: 30000)
+};
+
+const layer = new CloudLayer(config);
+const started = await layer.start(identity);
+// started = true if enabled + endpoint present + registration succeeded
+// started = false if disabled or no endpoint
+
+layer.on('peer-discovered', (peer) => console.log('Cloud peer:', peer.nodeId));
+layer.on('hub-assigned', (hubId) => console.log('Cloud assigned hub:', hubId));
+
+console.log(layer.getPeers());        // Peers from cloud
+console.log(layer.getAssignedHub());  // Hub dictated by cloud, or null
+
+// Report local probe results to cloud (cloud uses these for hub decisions)
+await layer.reportProbes(probes);
+
+await layer.stop();
+```
+
+For testing, inject a mock HTTP client:
+
+```typescript
+import type { CloudHttpClient, CloudLayerDeps } from '@rljson/network';
+
+const mockClient: CloudHttpClient = {
+  register: async () => ({ peers: [], assignedHub: null }),
+  poll: async () => ({ peers: [], assignedHub: null }),
+  reportProbes: async () => {},
+};
+
+const deps: CloudLayerDeps = { createHttpClient: () => mockClient };
+const layer = new CloudLayer(config, deps);
+```
+
 ### StaticLayer
 
 Last-resort fallback — reads a hardcoded hub address from config:
@@ -287,7 +335,7 @@ The `NetworkManager` evaluates hub assignment in this order:
 2. **Election via probing** → probes determine reachable peers, election picks hub
    - `formedBy: 'broadcast'` when broadcast layer is active with peers
    - `formedBy: 'election'` otherwise
-3. **Cloud** → cross-network (not yet implemented)
+3. **Cloud assignment** → cloud dictates hub (has the full picture)
 4. **Static config** → last resort
 5. **Nothing** → `myRole = 'unassigned'`
 

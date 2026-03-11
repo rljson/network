@@ -72,6 +72,16 @@ export {
   BroadcastLayer,
   defaultCreateUdpSocket,
 } from './layers/broadcast-layer.ts';
+export type {
+  CloudHttpClient,
+  CloudPeerListResponse,
+  CreateCloudHttpClient,
+  CloudLayerDeps,
+} from './layers/cloud-layer.ts';
+export {
+  CloudLayer,
+  defaultCreateCloudHttpClient,
+} from './layers/cloud-layer.ts';
 export { ManualLayer } from './layers/manual-layer.ts';
 export { StaticLayer } from './layers/static-layer.ts';
 

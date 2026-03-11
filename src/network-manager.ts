@@ -23,6 +23,7 @@ import {
   BroadcastLayer,
   type BroadcastLayerDeps,
 } from './layers/broadcast-layer.ts';
+import { CloudLayer, type CloudLayerDeps } from './layers/cloud-layer.ts';
 import { ManualLayer } from './layers/manual-layer.ts';
 import { StaticLayer } from './layers/static-layer.ts';
 import { PeerTable } from './peer-table.ts';
@@ -56,6 +57,8 @@ export interface NetworkManagerOptions {
   failThreshold?: number;
   /** Injectable dependencies for BroadcastLayer (e.g. mock sockets) */
   broadcastDeps?: BroadcastLayerDeps;
+  /** Injectable dependencies for CloudLayer (e.g. mock HTTP client) */
+  cloudDeps?: CloudLayerDeps;
 }
 
 // .............................................................................
@@ -78,6 +81,9 @@ export class NetworkManager {
 
   /** Try 1: UDP broadcast discovery */
   private readonly _broadcastLayer: BroadcastLayer;
+
+  /** Try 2: Cloud discovery fallback */
+  private readonly _cloudLayer: CloudLayer;
 
   /** Try 3: Static config fallback */
   private readonly _staticLayer: StaticLayer;
@@ -109,6 +115,7 @@ export class NetworkManager {
       this._config.broadcast,
       options?.broadcastDeps,
     );
+    this._cloudLayer = new CloudLayer(this._config.cloud, options?.cloudDeps);
     this._staticLayer = new StaticLayer(this._config.static);
     const probingConfig = this._config.probing;
     this._probeScheduler = new ProbeScheduler({
@@ -144,6 +151,7 @@ export class NetworkManager {
     // Attach layers to peer table
     this._peerTable.attachLayer(this._manualLayer);
     this._peerTable.attachLayer(this._broadcastLayer);
+    this._peerTable.attachLayer(this._cloudLayer);
     this._peerTable.attachLayer(this._staticLayer);
 
     // Listen for peer changes to trigger re-evaluation
@@ -168,6 +176,9 @@ export class NetworkManager {
     // but we subscribe for completeness if the layer evolves in the future.
     /* v8 ignore next -- @preserve */
     this._broadcastLayer.on('hub-assigned', () => this._recomputeTopology());
+    this._cloudLayer.on('hub-assigned', () => {
+      this._recomputeTopology();
+    });
     this._staticLayer.on('hub-assigned', () => {
       this._recomputeTopology();
     });
@@ -177,9 +188,10 @@ export class NetworkManager {
       this._recomputeTopology();
     });
 
-    // Start layers (cascade priority: broadcast > static)
+    // Start layers (cascade priority: broadcast > cloud > static)
     await this._manualLayer.start(this._identity);
     await this._broadcastLayer.start(this._identity);
+    await this._cloudLayer.start(this._identity);
     await this._staticLayer.start(this._identity);
 
     // Start probe scheduler if probing is enabled
@@ -206,6 +218,7 @@ export class NetworkManager {
     this._probeScheduler.stop();
     await this._manualLayer.stop();
     await this._broadcastLayer.stop();
+    await this._cloudLayer.stop();
     await this._staticLayer.stop();
 
     this._peerTable.clear();
@@ -340,7 +353,7 @@ export class NetworkManager {
    *   2. Election among probed peers (most autonomous)
    *      - formedBy 'broadcast' if broadcast layer provided peers
    *      - formedBy 'election' otherwise
-   *   3. [future] Cloud assignment (sees full picture)
+   *   3. Cloud assignment (sees full picture, dictates hub)
    *   4. Static config (last resort)
    *   5. Nothing → unassigned
    */
@@ -375,6 +388,14 @@ export class NetworkManager {
             ? 'broadcast'
             : 'election';
         return { hubId: result.hubId, formedBy };
+      }
+    }
+
+    // Try 2: Cloud — dictates hub (cloud has the full picture)
+    if (this._cloudLayer.isActive()) {
+      const cloudHub = this._cloudLayer.getAssignedHub();
+      if (cloudHub) {
+        return { hubId: cloudHub, formedBy: 'cloud' };
       }
     }
 
@@ -444,6 +465,9 @@ export class NetworkManager {
     if (this._formedBy === 'static' && this._staticLayer.getHubAddress()) {
       return this._staticLayer.getHubAddress();
     }
+
+    // If cloud layer provided the hub, resolve from peer table
+    // (cloud peers have full NodeInfo with localIps and port)
 
     // Otherwise, try to resolve from peer table
     const peer = this._peerTable.getPeer(this._currentHubId);

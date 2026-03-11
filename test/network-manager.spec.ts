@@ -4,7 +4,7 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
-import { describe, expect, it, afterEach } from 'vitest';
+import { describe, expect, it, afterEach, vi } from 'vitest';
 import { createServer, type Server, type AddressInfo } from 'node:net';
 
 import { NetworkManager } from '../src/network-manager';
@@ -18,6 +18,10 @@ import type {
 import type { NodeInfo } from '../src/types/node-info';
 import type { ProbeFn } from '../src/probing/probe-scheduler';
 import type { PeerProbe } from '../src/types/peer-probe';
+import type {
+  CloudHttpClient,
+  CloudPeerListResponse,
+} from '../src/layers/cloud-layer';
 
 // .............................................................................
 
@@ -27,6 +31,30 @@ function testConfig(overrides?: Partial<NetworkConfig>): NetworkConfig {
     ...defaultNetworkConfig('test-domain', 3000),
     ...overrides,
   };
+}
+
+// .............................................................................
+
+/** Minimal mock cloud service for NetworkManager integration tests */
+class MockCloudService implements CloudHttpClient {
+  nextResponse: CloudPeerListResponse = { peers: [], assignedHub: null };
+
+  register(): Promise<CloudPeerListResponse> {
+    return Promise.resolve(this.nextResponse);
+  }
+
+  poll(): Promise<CloudPeerListResponse> {
+    return Promise.resolve(this.nextResponse);
+  }
+
+  reportProbes(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+/** Create a MockCloudService factory for cloudDeps */
+function createMockCloudDeps(mock: MockCloudService) {
+  return { createHttpClient: () => mock };
 }
 
 // .............................................................................
@@ -585,8 +613,157 @@ describe('NetworkManager', () => {
   });
 
   // .........................................................................
-  // Tier 2: Real TCP integration
+  // Cloud layer integration
   // .........................................................................
+
+  describe('cloud layer', () => {
+    it('cloud hub assignment dictates topology', async () => {
+      const mock = new MockCloudService();
+      mock.nextResponse = {
+        peers: [
+          {
+            nodeId: 'cloud-hub-1',
+            hostname: 'hub',
+            localIps: ['10.0.0.99'],
+            domain: 'test-domain',
+            port: 3000,
+            startedAt: 1700000000000,
+          },
+        ],
+        assignedHub: 'cloud-hub-1',
+      };
+
+      manager = new NetworkManager(
+        testConfig({
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999, // disable auto-poll
+          },
+        }),
+        { cloudDeps: createMockCloudDeps(mock) },
+      );
+      await manager.start();
+
+      const topology = manager.getTopology();
+      expect(topology.formedBy).toBe('cloud');
+      expect(topology.hubNodeId).toBe('cloud-hub-1');
+      expect(topology.myRole).toBe('client');
+    });
+
+    it('cloud hub-assigned event triggers recompute', async () => {
+      vi.useFakeTimers();
+      try {
+        const mock = new MockCloudService();
+        // Initial registration: no hub
+        mock.nextResponse = { peers: [], assignedHub: null };
+
+        manager = new NetworkManager(
+          testConfig({
+            cloud: {
+              enabled: true,
+              endpoint: 'http://cloud.test',
+              pollIntervalMs: 1000,
+            },
+          }),
+          { cloudDeps: createMockCloudDeps(mock) },
+        );
+        await manager.start();
+
+        // No hub assigned yet → myRole is unassigned
+        expect(manager.getTopology().myRole).toBe('unassigned');
+        expect(manager.getTopology().hubNodeId).toBeNull();
+
+        // Now cloud assigns a hub on next poll
+        mock.nextResponse = {
+          peers: [
+            {
+              nodeId: 'hub-x',
+              hostname: 'hub',
+              localIps: ['10.0.0.50'],
+              domain: 'test-domain',
+              port: 3000,
+              startedAt: 1700000000000,
+            },
+          ],
+          assignedHub: 'hub-x',
+        };
+
+        // Advance timer to trigger poll
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const topology = manager.getTopology();
+        expect(topology.formedBy).toBe('cloud');
+        expect(topology.hubNodeId).toBe('hub-x');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('cloud supersedes static but not manual', async () => {
+      const mock = new MockCloudService();
+      mock.nextResponse = {
+        peers: [
+          {
+            nodeId: 'cloud-hub',
+            hostname: 'ch',
+            localIps: ['10.0.0.10'],
+            domain: 'test-domain',
+            port: 3000,
+            startedAt: 1700000000000,
+          },
+        ],
+        assignedHub: 'cloud-hub',
+      };
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '192.168.1.1:3000' },
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+        }),
+        { cloudDeps: createMockCloudDeps(mock) },
+      );
+      await manager.start();
+
+      // Cloud should supersede static
+      expect(manager.getTopology().formedBy).toBe('cloud');
+      expect(manager.getTopology().hubNodeId).toBe('cloud-hub');
+
+      // Manual should still supersede cloud
+      manager.assignHub('manual-hub');
+      expect(manager.getTopology().formedBy).toBe('manual');
+      expect(manager.getTopology().hubNodeId).toBe('manual-hub');
+    });
+
+    it('falls back to static when cloud has no hub assignment', async () => {
+      const mock = new MockCloudService();
+      mock.nextResponse = { peers: [], assignedHub: null };
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '192.168.1.1:3000' },
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+        }),
+        { cloudDeps: createMockCloudDeps(mock) },
+      );
+      await manager.start();
+
+      // Cloud active but no hub → fallback to static
+      expect(manager.getTopology().formedBy).toBe('static');
+    });
+  });
+
+  // .........................................................................
+  // Tier 2: Real TCP integration
+  // ..........................................................................
 
   describe('Tier 2: Real TCP probing', () => {
     const servers: Array<{ stop: () => Promise<void> }> = [];

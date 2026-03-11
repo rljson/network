@@ -204,7 +204,7 @@ Merged view of all peers from all discovery layers:
 Central orchestrator — the main public API:
 
 - Creates `NodeIdentity` on start (respects `identityDir` from config)
-- Starts ManualLayer, BroadcastLayer, and StaticLayer in cascade order
+- Starts ManualLayer, BroadcastLayer, CloudLayer, and StaticLayer in cascade order
 - Creates and manages `ProbeScheduler` for reachability checking
 - Uses `PeerTable` for merged peer tracking
 - Applies **cascade logic** via `_computeHub()`:
@@ -212,11 +212,11 @@ Central orchestrator — the main public API:
   2. Election via probes (if probes available → `electHub()`)
      - `formedBy: 'broadcast'` when broadcast layer is active with peers
      - `formedBy: 'election'` otherwise
-  3. (Future: Cloud assignment)
+  3. Cloud assignment (cloud dictates hub — has the full picture)
   4. Static config fallback
   5. No result → `unassigned`
-- Accepts `NetworkManagerOptions` with injectable `probeFn` and
-  `broadcastDeps` for testing
+- Accepts `NetworkManagerOptions` with injectable `probeFn`,
+  `broadcastDeps`, and `cloudDeps` for testing
 - Emits events: `topology-changed`, `role-changed`, `hub-changed`,
   `peer-joined`, `peer-left`
 - Continuous re-evaluation: any peer/hub change or probe update triggers

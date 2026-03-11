@@ -71,7 +71,7 @@ src/
 ├── layers/
 │   ├── discovery-layer.ts      // Interface
 │   ├── broadcast-layer.ts      // Try 1: UDP broadcast discovery
-│   ├── cloud-layer.ts          // Try 2: REST API (not yet implemented)
+│   ├── cloud-layer.ts          // Try 2: REST API cloud discovery
 │   ├── static-layer.ts         // Try 3: config file
 │   └── manual-layer.ts         // Override: programmatic API
 ├── peer-table.ts               // Merged view of all peers
