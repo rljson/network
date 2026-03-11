@@ -4,11 +4,23 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
-import { equals, JsonValue } from '@rljson/json';
-
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { dirname, join, relative } from 'path';
 import { expect } from 'vitest';
+
+/** JSON-compatible value (replaces @rljson/json dependency) */
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+/** Deep equality check via JSON round-trip */
+function jsonEquals(a: JsonValue, b: JsonValue): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
 
 /// If this is set to true, the golden files will be updated.
 export const shouldUpdateGoldens = () => {
@@ -73,7 +85,7 @@ export const expectGolden = (
 
       // npm updateGoldens enabled? Show an hint to run the command.
       if (npmUpdateGoldensEnabled) {
-        needsGoldenUpdate = equals(expected, golden) === false;
+        needsGoldenUpdate = jsonEquals(expected, golden) === false;
 
         if (needsGoldenUpdate) {
           expect.fail(

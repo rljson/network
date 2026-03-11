@@ -10,14 +10,13 @@ import { example } from '../src/example';
 
 import { expectGolden } from './setup/goldens';
 
-
 describe('example', () => {
   it('should run without error', async () => {
     // Execute example
     const logMessages: string[] = [];
     const log = console.log;
     console.log = (message: string) => logMessages.push(message);
-    example();
+    await example();
 
     // Write golden file
     await expectGolden('example.log').toBe(logMessages.join('\n'));

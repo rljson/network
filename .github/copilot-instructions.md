@@ -40,6 +40,17 @@ The network package knows **nothing** about Io, Bs, Db, trees, hashes, or sync. 
 2. **Earliest `startedAt`**: If no incumbent, the node with the earliest startup timestamp wins.
 3. **Tiebreaker**: Lexicographic `nodeId` comparison (astronomically rare).
 
+### Flap Dampening
+
+ProbeScheduler uses consecutive failure counting to prevent flapping:
+
+- A peer must fail `failThreshold` consecutive probes (default: 3) before
+  being declared unreachable
+- A single success resets the counter immediately
+- First probe establishes baseline — never triggers events
+- The `FormedBy` type includes `'broadcast'` when broadcast layer is active
+  with peers, and `'election'` otherwise
+
 ### Target Module Structure
 
 ```
@@ -52,19 +63,20 @@ src/
 │   └── network-events.ts       // Event type definitions
 ├── identity/
 │   └── node-identity.ts        // Persistent UUID, hostname, IP discovery
+├── election/
+│   └── hub-election.ts         // Deterministic hub election (pure function)
+├── probing/
+│   ├── peer-prober.ts          // Real TCP connect probe via node:net
+│   └── probe-scheduler.ts      // Periodic probing + change detection
 ├── layers/
 │   ├── discovery-layer.ts      // Interface
-│   ├── broadcast-layer.ts      // Try 1: UDP
-│   ├── cloud-layer.ts          // Try 2: REST API
+│   ├── broadcast-layer.ts      // Try 1: UDP broadcast discovery
+│   ├── cloud-layer.ts          // Try 2: REST API cloud discovery
 │   ├── static-layer.ts         // Try 3: config file
 │   └── manual-layer.ts         // Override: programmatic API
-├── probing/
-│   ├── peer-prober.ts          // Single TCP probe
-│   └── probe-scheduler.ts      // Periodic probing
-├── election/
-│   └── hub-election.ts         // Incumbent + startedAt election
 ├── peer-table.ts               // Merged view of all peers
 ├── network-manager.ts          // Main orchestrator
+├── example.ts                  // Runnable example
 └── index.ts                    // Public API exports
 ```
 
