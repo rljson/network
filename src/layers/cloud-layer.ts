@@ -182,11 +182,18 @@ export class CloudLayer implements DiscoveryLayer {
 
   private _active = false;
   private _identity: NodeIdentity | null = null;
-  private _pollTimer: ReturnType<typeof setInterval> | null = null;
+  private _pollTimer: ReturnType<typeof setTimeout> | null = null;
   private _peers = new Map<NodeId, NodeInfo>();
   private _assignedHub: NodeId | null = null;
   private _listeners = new Map<string, Set<Listener>>();
   private readonly _httpClient: CloudHttpClient;
+
+  // Backoff state
+  private _consecutivePollFailures = 0;
+  private _basePollIntervalMs = 30000;
+  private _currentPollIntervalMs = 30000;
+  private _maxBackoffMs = 300000;
+  private _reRegisterThreshold = 10;
 
   /**
    * Create a CloudLayer.
@@ -216,6 +223,9 @@ export class CloudLayer implements DiscoveryLayer {
    * @returns true if cloud is available, false otherwise
    */
   async start(identity: NodeIdentity): Promise<boolean> {
+    // Idempotency: already active → nothing to do
+    if (this._active) return true;
+
     if (this._config?.enabled !== true) {
       return false;
     }
@@ -241,14 +251,24 @@ export class CloudLayer implements DiscoveryLayer {
 
     this._active = true;
 
+    // Initialize backoff state (enforce minimums to prevent tight loops)
+    this._basePollIntervalMs = Math.max(
+      this._config.pollIntervalMs ?? 30000,
+      100,
+    );
+    this._currentPollIntervalMs = this._basePollIntervalMs;
+    this._maxBackoffMs = Math.max(this._config.maxBackoffMs ?? 300000, 100);
+    this._reRegisterThreshold = Math.max(
+      this._config.reRegisterAfterFailures ?? 10,
+      1,
+    );
+    this._consecutivePollFailures = 0;
+
     // Process initial response
     this._processResponse(response);
 
-    // Start periodic polling
-    const pollIntervalMs = this._config.pollIntervalMs ?? 30000;
-    this._pollTimer = setInterval(() => {
-      void this._poll();
-    }, pollIntervalMs);
+    // Start periodic polling (setTimeout-based for backoff support)
+    this._schedulePoll();
 
     return true;
   }
@@ -256,7 +276,7 @@ export class CloudLayer implements DiscoveryLayer {
   /** Stop the layer and clean up resources */
   async stop(): Promise<void> {
     if (this._pollTimer) {
-      clearInterval(this._pollTimer);
+      clearTimeout(this._pollTimer);
       this._pollTimer = null;
     }
 
@@ -272,6 +292,8 @@ export class CloudLayer implements DiscoveryLayer {
     this._active = false;
     this._identity = null;
     this._listeners.clear();
+    this._consecutivePollFailures = 0;
+    this._currentPollIntervalMs = this._basePollIntervalMs;
   }
 
   /** Whether this layer is currently active */
@@ -294,6 +316,16 @@ export class CloudLayer implements DiscoveryLayer {
    */
   getAssignedHub(): NodeId | null {
     return this._assignedHub;
+  }
+
+  /** Get current consecutive poll failure count (for diagnostics/testing) */
+  getConsecutivePollFailures(): number {
+    return this._consecutivePollFailures;
+  }
+
+  /** Get current effective poll interval including backoff (for diagnostics/testing) */
+  getCurrentPollIntervalMs(): number {
+    return this._currentPollIntervalMs;
   }
 
   // .........................................................................
@@ -362,24 +394,81 @@ export class CloudLayer implements DiscoveryLayer {
   // .........................................................................
 
   /**
+   * Schedule the next poll using setTimeout.
+   * Uses the current (possibly backed-off) interval.
+   */
+  private _schedulePoll(): void {
+    this._pollTimer = setTimeout(() => {
+      void this._poll()
+        .catch(() => {
+          // Defensive: ensure polling continues even if a listener throws
+        })
+        .then(() => {
+          /* v8 ignore if -- @preserve */
+          if (this._active) this._schedulePoll();
+        });
+    }, this._currentPollIntervalMs);
+  }
+
+  /**
    * Poll the cloud for latest peer list and hub assignment.
+   *
+   * After many consecutive failures, attempts re-registration instead
+   * of a regular poll (the cloud may have expired our registration).
+   *
+   * On success: resets failure counter and backoff interval.
+   * On failure: increments counter and doubles interval (capped at maxBackoffMs).
    */
   private async _poll(): Promise<void> {
     /* v8 ignore if -- @preserve */
     if (!this._identity || !this._config?.endpoint) return;
 
+    // After many consecutive failures, try re-registration
+    if (this._consecutivePollFailures >= this._reRegisterThreshold) {
+      let response: CloudPeerListResponse;
+      try {
+        response = await this._httpClient.register(
+          this._config.endpoint,
+          this._identity.toNodeInfo(),
+          this._config.apiKey,
+        );
+      } catch {
+        this._consecutivePollFailures++;
+        this._currentPollIntervalMs = Math.min(
+          this._currentPollIntervalMs * 2,
+          this._maxBackoffMs,
+        );
+        return;
+      }
+
+      // HTTP succeeded — reset backoff before processing response
+      this._consecutivePollFailures = 0;
+      this._currentPollIntervalMs = this._basePollIntervalMs;
+      this._processResponse(response);
+      return;
+    }
+
+    let response: CloudPeerListResponse;
     try {
-      const response = await this._httpClient.poll(
+      response = await this._httpClient.poll(
         this._config.endpoint,
         this._identity.nodeId,
         this._identity.domain,
         this._config.apiKey,
       );
-      this._processResponse(response);
     } catch {
-      // Poll failed — cloud may be temporarily unreachable
-      // Stay active — will retry on next interval
+      this._consecutivePollFailures++;
+      this._currentPollIntervalMs = Math.min(
+        this._currentPollIntervalMs * 2,
+        this._maxBackoffMs,
+      );
+      return;
     }
+
+    // HTTP succeeded — reset backoff before processing response
+    this._consecutivePollFailures = 0;
+    this._currentPollIntervalMs = this._basePollIntervalMs;
+    this._processResponse(response);
   }
 
   /**

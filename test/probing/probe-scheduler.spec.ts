@@ -746,4 +746,69 @@ describe('ProbeScheduler', () => {
       }
     });
   });
+
+  // .........................................................................
+  // Stale probe cleanup
+  // .........................................................................
+
+  describe('stale probe cleanup', () => {
+    it('removes stale entries when setPeers reduces the list', async () => {
+      scheduler = new ProbeScheduler({ timeoutMs: 100 });
+      scheduler.setPeers([
+        makeNode('peer-a', 3001),
+        makeNode('peer-b', 3002),
+        makeNode('peer-c', 3003),
+      ]);
+
+      // Run a cycle to populate internal maps
+      await scheduler.runOnce();
+
+      const probesBefore = scheduler.getProbes();
+      expect(probesBefore).toHaveLength(3);
+
+      // Now reduce peers — peer-c is removed
+      scheduler.setPeers([makeNode('peer-a', 3001), makeNode('peer-b', 3002)]);
+
+      const probesAfter = scheduler.getProbes();
+      expect(probesAfter).toHaveLength(2);
+      const ids = probesAfter.map((p) => p.toNodeId);
+      expect(ids).toContain('peer-a');
+      expect(ids).toContain('peer-b');
+      expect(ids).not.toContain('peer-c');
+    });
+
+    it('removes all stale entries when peers are replaced entirely', async () => {
+      scheduler = new ProbeScheduler({ timeoutMs: 100 });
+      scheduler.setPeers([makeNode('old-1', 3001), makeNode('old-2', 3002)]);
+
+      await scheduler.runOnce();
+      expect(scheduler.getProbes()).toHaveLength(2);
+
+      // Replace with completely different peers — old probes are cleaned
+      scheduler.setPeers([makeNode('new-1', 4001)]);
+
+      // Old probes are removed; new-1 has no probe yet (not probed)
+      const probes = scheduler.getProbes();
+      expect(probes).toHaveLength(0);
+      expect(probes.find((p) => p.toNodeId === 'old-1')).toBeUndefined();
+      expect(probes.find((p) => p.toNodeId === 'old-2')).toBeUndefined();
+
+      // After probing, only new-1 appears
+      await scheduler.runOnce();
+      const probesAfterProbe = scheduler.getProbes();
+      expect(probesAfterProbe).toHaveLength(1);
+      expect(probesAfterProbe[0]!.toNodeId).toBe('new-1');
+    });
+
+    it('handles setting empty peers (clears all stale entries)', async () => {
+      scheduler = new ProbeScheduler({ timeoutMs: 100 });
+      scheduler.setPeers([makeNode('peer-a', 3001)]);
+
+      await scheduler.runOnce();
+      expect(scheduler.getProbes()).toHaveLength(1);
+
+      scheduler.setPeers([]);
+      expect(scheduler.getProbes()).toHaveLength(0);
+    });
+  });
 });

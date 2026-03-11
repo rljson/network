@@ -68,7 +68,7 @@ export class ProbeScheduler {
   private _failThreshold: number;
   private _selfId: NodeId = '';
   private _running = false;
-  private _timer: ReturnType<typeof setInterval> | null = null;
+  private _timer: ReturnType<typeof setTimeout> | null = null;
 
   /** Latest probe results, keyed by toNodeId */
   private _probes = new Map<NodeId, PeerProbe>();
@@ -108,12 +108,22 @@ export class ProbeScheduler {
     this._selfId = selfId;
     this._running = true;
 
-    // Run first cycle immediately
-    void this._runCycle();
+    // Run first cycle immediately, then chain subsequent cycles
+    void this._runCycle().then(() => {
+      if (this._running) this._scheduleNext();
+    });
+  }
 
-    // Schedule subsequent cycles
-    this._timer = setInterval(() => {
-      void this._runCycle();
+  /**
+   * Schedule the next probe cycle using setTimeout.
+   * Chaining (instead of setInterval) prevents overlapping cycles.
+   */
+  private _scheduleNext(): void {
+    this._timer = setTimeout(() => {
+      void this._runCycle().then(() => {
+        /* v8 ignore else -- @preserve */
+        if (this._running) this._scheduleNext();
+      });
     }, this._intervalMs);
   }
 
@@ -124,7 +134,7 @@ export class ProbeScheduler {
 
     /* v8 ignore if -- @preserve */
     if (this._timer) {
-      clearInterval(this._timer);
+      clearTimeout(this._timer);
       this._timer = null;
     }
 
@@ -147,6 +157,17 @@ export class ProbeScheduler {
    */
   setPeers(peers: NodeInfo[]): void {
     this._peers = [...peers];
+
+    // Clean up stale entries for peers no longer in the list
+    const currentPeerIds = new Set(peers.map((p) => p.nodeId));
+    for (const [nodeId] of this._probes) {
+      /* v8 ignore if -- @preserve */
+      if (!currentPeerIds.has(nodeId)) {
+        this._probes.delete(nodeId);
+        this._wasReachable.delete(nodeId);
+        this._failCount.delete(nodeId);
+      }
+    }
   }
 
   /** Get all latest probe results */

@@ -28,6 +28,10 @@ export interface CloudConfig {
   apiKey?: string;
   /** How often to poll in ms (default: 30000) */
   pollIntervalMs?: number;
+  /** Maximum backoff interval when cloud is unreachable in ms (default: 300000 = 5 min) */
+  maxBackoffMs?: number;
+  /** Attempt re-registration after this many consecutive poll failures (default: 10) */
+  reRegisterAfterFailures?: number;
 }
 
 /** Configuration for the static discovery layer (Try 3) */

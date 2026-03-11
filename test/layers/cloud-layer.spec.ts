@@ -811,4 +811,520 @@ describe('CloudLayer', () => {
       vi.unstubAllGlobals();
     });
   });
+
+  // .........................................................................
+  // Lifecycle hardening
+  // .........................................................................
+
+  describe('lifecycle hardening', () => {
+    it('start is idempotent — calling twice does not create duplicate poll timers', async () => {
+      vi.useFakeTimers();
+      await layer.start(testIdentity());
+
+      // Track poll calls
+      let pollCount = 0;
+      const originalPoll = cloud.poll.bind(cloud);
+      cloud.poll = async (...args: Parameters<typeof cloud.poll>) => {
+        pollCount++;
+        return originalPoll(...args);
+      };
+
+      // Call start again — should be a no-op
+      const secondResult = await layer.start(testIdentity());
+      expect(secondResult).toBe(true);
+
+      // Advance time — should only get polls from the FIRST timer
+      await vi.advanceTimersByTimeAsync(60000);
+      // If duplicate timers existed, pollCount would be ~2
+      expect(pollCount).toBe(1);
+
+      await layer.stop();
+      vi.useRealTimers();
+    });
+
+    it('stop → start resets backoff state completely', async () => {
+      vi.useFakeTimers();
+
+      const restartLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 1000,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await restartLayer.start(testIdentity());
+
+      // Accumulate backoff
+      cloud.pollError = new Error('down');
+      await vi.advanceTimersByTimeAsync(100); // fail 1, interval→200
+      await vi.advanceTimersByTimeAsync(200); // fail 2, interval→400
+      expect(restartLayer.getConsecutivePollFailures()).toBe(2);
+      expect(restartLayer.getCurrentPollIntervalMs()).toBe(400);
+
+      // Stop — should reset
+      await restartLayer.stop();
+      expect(restartLayer.getConsecutivePollFailures()).toBe(0);
+      expect(restartLayer.getCurrentPollIntervalMs()).toBe(100);
+
+      // Start again — should work fresh
+      cloud.pollError = null;
+      await restartLayer.start(testIdentity());
+      expect(restartLayer.isActive()).toBe(true);
+      expect(restartLayer.getConsecutivePollFailures()).toBe(0);
+      expect(restartLayer.getCurrentPollIntervalMs()).toBe(100);
+
+      // Verify polling works at base interval
+      await vi.advanceTimersByTimeAsync(100);
+      expect(restartLayer.getConsecutivePollFailures()).toBe(0);
+
+      await restartLayer.stop();
+      vi.useRealTimers();
+    });
+
+    it('enforces minimum pollIntervalMs of 100', async () => {
+      const minLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 0, // would cause tight loop without guard
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await minLayer.start(testIdentity());
+      expect(minLayer.getCurrentPollIntervalMs()).toBe(100); // clamped
+      await minLayer.stop();
+    });
+
+    it('enforces minimum maxBackoffMs of 100', async () => {
+      vi.useFakeTimers();
+      const minLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 0, // would disable backoff without guard
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await minLayer.start(testIdentity());
+
+      cloud.pollError = new Error('down');
+      await vi.advanceTimersByTimeAsync(100); // fail 1
+      // Without min guard, interval would be min(200,0)=0 — tight loop
+      // With guard, maxBackoffMs is 100, so interval is min(200,100)=100
+      expect(minLayer.getCurrentPollIntervalMs()).toBe(100);
+
+      await minLayer.stop();
+      vi.useRealTimers();
+    });
+
+    it('enforces minimum reRegisterAfterFailures of 1', async () => {
+      vi.useFakeTimers();
+      const minLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 200,
+          reRegisterAfterFailures: 0, // without guard, would re-register on every poll
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await minLayer.start(testIdentity());
+
+      // First poll failure should NOT immediately re-register (threshold clamped to 1)
+      cloud.pollError = new Error('down');
+      cloud.registerCalls = [];
+      await vi.advanceTimersByTimeAsync(100); // fail 1
+      expect(minLayer.getConsecutivePollFailures()).toBe(1);
+
+      // Now at threshold=1, next cycle DOES re-register
+      cloud.pollError = null;
+      cloud.registerCalls = [];
+      await vi.advanceTimersByTimeAsync(200);
+      expect(cloud.registerCalls).toHaveLength(1);
+      expect(minLayer.getConsecutivePollFailures()).toBe(0);
+
+      await minLayer.stop();
+      vi.useRealTimers();
+    });
+
+    it('stop during active polling does not re-schedule', async () => {
+      vi.useFakeTimers();
+
+      const stopLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await stopLayer.start(testIdentity());
+      expect(stopLayer.isActive()).toBe(true);
+
+      // Stop immediately
+      await stopLayer.stop();
+      expect(stopLayer.isActive()).toBe(false);
+
+      // Advance time — no polls should fire
+      let pollFired = false;
+      const originalPoll = cloud.poll.bind(cloud);
+      cloud.poll = async (...args: Parameters<typeof cloud.poll>) => {
+        pollFired = true;
+        return originalPoll(...args);
+      };
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(pollFired).toBe(false);
+
+      vi.useRealTimers();
+    });
+
+    it('survives a throwing listener without killing poll loop', async () => {
+      vi.useFakeTimers();
+
+      // Start with no peers — the peer will appear on the first scheduled poll
+      cloud.nextResponse = { peers: [], assignedHub: null };
+
+      const throwLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      // Listener that throws every time
+      let throwCount = 0;
+      throwLayer.on('peer-discovered', () => {
+        throwCount++;
+        throw new Error('Listener exploded!');
+      });
+
+      await throwLayer.start(testIdentity());
+      expect(throwCount).toBe(0); // No peers during start
+
+      // Add a peer before first scheduled poll
+      cloud.nextResponse = {
+        peers: [
+          {
+            nodeId: 'throw-peer',
+            hostname: 'tp',
+            localIps: ['10.0.0.1'],
+            domain: 'test',
+            port: 3000,
+            startedAt: 1700000000000,
+          },
+        ],
+        assignedHub: null,
+      };
+
+      // First scheduled poll triggers peer-discovered → listener throws
+      // The .catch() in _schedulePoll should absorb it
+      await vi.advanceTimersByTimeAsync(100);
+      expect(throwCount).toBe(1);
+
+      // Polling should continue despite the throw
+      // Add another new peer so peer-discovered fires again
+      cloud.nextResponse = {
+        peers: [
+          {
+            nodeId: 'throw-peer',
+            hostname: 'tp',
+            localIps: ['10.0.0.1'],
+            domain: 'test',
+            port: 3000,
+            startedAt: 1700000000000,
+          },
+          {
+            nodeId: 'throw-peer-2',
+            hostname: 'tp2',
+            localIps: ['10.0.0.2'],
+            domain: 'test',
+            port: 3001,
+            startedAt: 1700000000001,
+          },
+        ],
+        assignedHub: null,
+      };
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(throwCount).toBe(2); // Listener called again — poll loop survived
+
+      await throwLayer.stop();
+      vi.useRealTimers();
+    });
+  });
+
+  // .........................................................................
+  // Backoff and re-registration
+  // .........................................................................
+
+  describe('exponential backoff', () => {
+    it('doubles poll interval after each consecutive failure', async () => {
+      vi.useFakeTimers();
+      const backoffLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 10000,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await backoffLayer.start(testIdentity());
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(100);
+      expect(backoffLayer.getConsecutivePollFailures()).toBe(0);
+
+      // First failure → interval doubles to 200
+      cloud.pollError = new Error('down');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(backoffLayer.getConsecutivePollFailures()).toBe(1);
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(200);
+
+      // Second failure → interval doubles to 400
+      await vi.advanceTimersByTimeAsync(200);
+      expect(backoffLayer.getConsecutivePollFailures()).toBe(2);
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(400);
+
+      // Third failure → interval doubles to 800
+      await vi.advanceTimersByTimeAsync(400);
+      expect(backoffLayer.getConsecutivePollFailures()).toBe(3);
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(800);
+
+      await backoffLayer.stop();
+      vi.useRealTimers();
+    });
+
+    it('caps backoff at maxBackoffMs', async () => {
+      vi.useFakeTimers();
+      const backoffLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 300, // low cap for fast test
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await backoffLayer.start(testIdentity());
+
+      cloud.pollError = new Error('down');
+
+      // 100 → 200
+      await vi.advanceTimersByTimeAsync(100);
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(200);
+
+      // 200 → 300 (capped)
+      await vi.advanceTimersByTimeAsync(200);
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(300);
+
+      // 300 → still 300 (capped)
+      await vi.advanceTimersByTimeAsync(300);
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(300);
+
+      await backoffLayer.stop();
+      vi.useRealTimers();
+    });
+
+    it('resets backoff on successful poll', async () => {
+      vi.useFakeTimers();
+      const backoffLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 10000,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await backoffLayer.start(testIdentity());
+
+      // Fail twice → interval 400
+      cloud.pollError = new Error('down');
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(backoffLayer.getConsecutivePollFailures()).toBe(2);
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(400);
+
+      // Success → interval reset to 100
+      cloud.pollError = null;
+      await vi.advanceTimersByTimeAsync(400);
+      expect(backoffLayer.getConsecutivePollFailures()).toBe(0);
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(100);
+
+      await backoffLayer.stop();
+      vi.useRealTimers();
+    });
+
+    it('uses default maxBackoffMs (300000) when not configured', async () => {
+      const backoffLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await backoffLayer.start(testIdentity());
+      // Default maxBackoffMs is 300000 — we can't easily test the cap
+      // without many iterations, but we can verify the initial state
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(100);
+
+      await backoffLayer.stop();
+    });
+
+    it('stop resets backoff state', async () => {
+      vi.useFakeTimers();
+      const backoffLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 10000,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await backoffLayer.start(testIdentity());
+
+      // Accumulate some failures
+      cloud.pollError = new Error('down');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(backoffLayer.getConsecutivePollFailures()).toBe(1);
+
+      await backoffLayer.stop();
+
+      // After stop, backoff is reset
+      expect(backoffLayer.getConsecutivePollFailures()).toBe(0);
+      expect(backoffLayer.getCurrentPollIntervalMs()).toBe(100);
+
+      vi.useRealTimers();
+    });
+  });
+
+  describe('re-registration after prolonged failure', () => {
+    it('attempts re-registration after reRegisterAfterFailures', async () => {
+      vi.useFakeTimers();
+      const reRegLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 200, // keep backoff small for fast test
+          reRegisterAfterFailures: 3, // re-register after 3 failures
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await reRegLayer.start(testIdentity());
+
+      cloud.pollError = new Error('down');
+
+      // Fail 3 times to reach threshold
+      await vi.advanceTimersByTimeAsync(100); // fail 1, interval→200
+      await vi.advanceTimersByTimeAsync(200); // fail 2, interval→200 (capped)
+      await vi.advanceTimersByTimeAsync(200); // fail 3, interval→200 (capped)
+
+      expect(reRegLayer.getConsecutivePollFailures()).toBe(3);
+
+      // Next cycle: re-registration (not poll)
+      cloud.pollError = null;
+      cloud.registerCalls = [];
+      await vi.advanceTimersByTimeAsync(200);
+
+      // Should have called register, not poll
+      expect(cloud.registerCalls).toHaveLength(1);
+      expect(reRegLayer.getConsecutivePollFailures()).toBe(0);
+      expect(reRegLayer.getCurrentPollIntervalMs()).toBe(100); // reset
+
+      await reRegLayer.stop();
+      vi.useRealTimers();
+    });
+
+    it('continues backoff if re-registration also fails', async () => {
+      vi.useFakeTimers();
+      const reRegLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 1000,
+          reRegisterAfterFailures: 2, // re-register after 2 failures
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await reRegLayer.start(testIdentity());
+
+      // Fail polls to reach threshold
+      cloud.pollError = new Error('down');
+      await vi.advanceTimersByTimeAsync(100); // fail 1, interval=200
+      await vi.advanceTimersByTimeAsync(200); // fail 2, interval=400
+
+      expect(reRegLayer.getConsecutivePollFailures()).toBe(2);
+
+      // Re-registration also fails
+      cloud.registerError = new Error('still down');
+      await vi.advanceTimersByTimeAsync(400);
+
+      // Failure count increased, backoff continued
+      expect(reRegLayer.getConsecutivePollFailures()).toBe(3);
+      expect(reRegLayer.getCurrentPollIntervalMs()).toBe(800);
+
+      await reRegLayer.stop();
+      vi.useRealTimers();
+    });
+
+    it('defaults to reRegisterAfterFailures=10', async () => {
+      vi.useFakeTimers();
+      const defaultLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+          maxBackoffMs: 200,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await defaultLayer.start(testIdentity());
+      const initialRegisterCount = cloud.registerCalls.length;
+
+      cloud.pollError = new Error('down');
+
+      // Fail 9 times — should NOT re-register yet (all at maxBackoff=200)
+      for (let i = 0; i < 9; i++) {
+        await vi.advanceTimersByTimeAsync(200);
+      }
+      expect(defaultLayer.getConsecutivePollFailures()).toBe(9);
+      expect(cloud.registerCalls.length).toBe(initialRegisterCount);
+
+      // Fail 10th time — threshold reached, next will re-register
+      await vi.advanceTimersByTimeAsync(200);
+      expect(defaultLayer.getConsecutivePollFailures()).toBe(10);
+
+      // Next cycle triggers re-registration
+      cloud.pollError = null;
+      cloud.registerCalls = [];
+      await vi.advanceTimersByTimeAsync(200);
+      expect(cloud.registerCalls).toHaveLength(1);
+
+      await defaultLayer.stop();
+      vi.useRealTimers();
+    });
+  });
 });

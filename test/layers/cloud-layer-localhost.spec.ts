@@ -794,7 +794,7 @@ describe('CloudLayer localhost — real HTTP', () => {
         {
           enabled: true,
           endpoint: server.endpoint,
-          pollIntervalMs: 50,
+          pollIntervalMs: 100,
         },
         { createHttpClient: defaultCreateCloudHttpClient },
       );
@@ -804,7 +804,7 @@ describe('CloudLayer localhost — real HTTP', () => {
 
       // Cloud goes down
       server.failPoll = true;
-      await waitForPoll();
+      await waitForPoll(150);
 
       // Cloud comes back with a new peer
       server.failPoll = false;
@@ -817,7 +817,8 @@ describe('CloudLayer localhost — real HTTP', () => {
         startedAt: 1700000050000,
       });
 
-      await waitForPoll();
+      // After one failure, backoff doubles to 200ms — wait long enough
+      await waitForPoll(300);
 
       // Should have discovered the new peer after recovery
       expect(layer.getPeers()).toHaveLength(1);
@@ -1107,7 +1108,7 @@ describe('CloudLayer localhost — real HTTP', () => {
       // ── Phase 6: Cloud outage ─────────────────────────────────────
       server.failPoll = true;
 
-      await waitForPoll();
+      await waitForPoll(200);
 
       // Layer stays active, keeps last known state
       expect(layer.isActive()).toBe(true);
@@ -1115,6 +1116,8 @@ describe('CloudLayer localhost — real HTTP', () => {
       expect(layer.getAssignedHub()).toBe('peer-beta');
 
       // ── Phase 7: Cloud recovery — new peer appeared during outage ─
+      // After the outage, backoff doubled the poll interval (50 → 100ms),
+      // so we wait longer to ensure the backed-off poll fires.
       server.failPoll = false;
       server.registeredNodes.push({
         nodeId: 'peer-gamma',
@@ -1125,7 +1128,7 @@ describe('CloudLayer localhost — real HTTP', () => {
         startedAt: 1700000003000,
       });
 
-      await waitForPoll();
+      await waitForPoll(250);
 
       expect(layer.getPeers()).toHaveLength(2);
       expect(discovered).toContain('peer-gamma');
@@ -1180,6 +1183,97 @@ describe('CloudLayer localhost — real HTTP', () => {
       expect(rejoinDiscovered).toContain('peer-gamma');
       expect(rejoinDiscovered).toContain('peer-delta');
       expect(rejoinHubs).toContain('peer-delta');
+    });
+  });
+
+  // .........................................................................
+  // Backoff integration (real HTTP)
+  // .........................................................................
+
+  describe('backoff with real HTTP server', () => {
+    it('increases poll interval on server failure, resets on recovery', async () => {
+      const server = new LocalCloudServer();
+      await server.start();
+
+      const basePoll = 100;
+      const layer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: server.endpoint,
+          pollIntervalMs: basePoll,
+          maxBackoffMs: 800,
+        },
+        { createHttpClient: () => defaultCreateCloudHttpClient() },
+      );
+
+      // Start and register a peer
+      server.registeredNodes.push({
+        nodeId: 'backoff-peer',
+        hostname: 'bp-host',
+        localIps: ['127.0.0.1'],
+        domain: 'test-domain',
+        port: 4001,
+        startedAt: 1700000000000,
+      });
+
+      await layer.start(testIdentity({ nodeId: 'backoff-node' }));
+      expect(layer.getCurrentPollIntervalMs()).toBe(basePoll);
+
+      // Wait for a successful poll
+      const waitForPoll = (ms: number = 150): Promise<void> =>
+        new Promise((resolve) => setTimeout(resolve, ms));
+
+      await waitForPoll(150);
+      expect(layer.getConsecutivePollFailures()).toBe(0);
+      expect(layer.getPeers()).toHaveLength(1);
+
+      // Server goes down → failures accumulate, interval grows
+      server.failPoll = true;
+      await waitForPoll(350); // enough for ~1-2 poll failures at 100ms base
+      expect(layer.getConsecutivePollFailures()).toBeGreaterThan(0);
+      expect(layer.getCurrentPollIntervalMs()).toBeGreaterThan(basePoll);
+
+      const backedOffInterval = layer.getCurrentPollIntervalMs();
+
+      // Server recovers → interval resets
+      server.failPoll = false;
+      await waitForPoll(backedOffInterval + 150);
+      expect(layer.getConsecutivePollFailures()).toBe(0);
+      expect(layer.getCurrentPollIntervalMs()).toBe(basePoll);
+
+      await layer.stop();
+      await server.stop();
+    });
+
+    it('caps backoff at maxBackoffMs with real server', async () => {
+      const server = new LocalCloudServer();
+      await server.start();
+
+      const layer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: server.endpoint,
+          pollIntervalMs: 100,
+          maxBackoffMs: 200,
+        },
+        { createHttpClient: () => defaultCreateCloudHttpClient() },
+      );
+
+      await layer.start(testIdentity({ nodeId: 'cap-node' }));
+
+      // Let it do one successful poll first
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Fail many times to hit the cap
+      server.failPoll = true;
+      await new Promise((resolve) => setTimeout(resolve, 800));
+
+      // Interval should be capped at 200, not growing beyond
+      expect(layer.getCurrentPollIntervalMs()).toBeLessThanOrEqual(200);
+      expect(layer.getConsecutivePollFailures()).toBeGreaterThan(0);
+
+      await layer.stop();
+      await server.stop();
     });
   });
 });
