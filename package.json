@@ -5,6 +5,9 @@
   "homepage": "https://github.com/rljson/network",
   "bugs": "https://github.com/rljson/network/issues",
   "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "engines": {
     "node": ">=22.14.0"
