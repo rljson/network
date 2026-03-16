@@ -79,6 +79,9 @@ export class ProbeScheduler {
   /** Consecutive failure count per peer, for flap dampening */
   private _failCount = new Map<NodeId, number>();
 
+  /** Peers that have been successfully probed at least once */
+  private _everReachable = new Set<NodeId>();
+
   /** Event listeners */
   private _listeners = new Map<string, Set<Listener>>();
 
@@ -141,6 +144,7 @@ export class ProbeScheduler {
     this._probes.clear();
     this._wasReachable.clear();
     this._failCount.clear();
+    this._everReachable.clear();
     this._peers = [];
   }
 
@@ -189,6 +193,15 @@ export class ProbeScheduler {
    */
   async runOnce(): Promise<PeerProbe[]> {
     return this._runCycle();
+  }
+
+  /**
+   * Whether a peer has ever been successfully probed.
+   * Used to distinguish "new peer (startup race)" from "crashed peer".
+   * @param nodeId - The peer's nodeId
+   */
+  hasEverBeenReachable(nodeId: NodeId): boolean {
+    return this._everReachable.has(nodeId);
   }
 
   // .........................................................................
@@ -263,6 +276,7 @@ export class ProbeScheduler {
         // Success: reset fail counter, immediately mark reachable
         this._failCount.set(probe.toNodeId, 0);
         this._wasReachable.set(probe.toNodeId, true);
+        this._everReachable.add(probe.toNodeId);
 
         if (previous !== undefined && !previous) {
           this._emit('peer-reachable', probe.toNodeId, probe);
