@@ -373,10 +373,21 @@ export class NetworkManager {
         this._identity.toNodeInfo(),
         ...this._peerTable.getPeers(),
       ];
+
+      // Never apply incumbent advantage to self — self is always
+      // reachable, so it would always win via 'incumbent' and
+      // prevent a peer with an earlier startedAt from taking over.
+      // This avoids split-brain when two nodes start simultaneously
+      // and both elect themselves before discovering each other.
+      const effectiveIncumbent =
+        this._currentHubId === this._identity.nodeId
+          ? null
+          : this._currentHubId;
+
       const result = electHub(
         candidates,
         probes,
-        this._currentHubId,
+        effectiveIncumbent,
         this._identity.nodeId,
       );
       /* v8 ignore else -- @preserve */
