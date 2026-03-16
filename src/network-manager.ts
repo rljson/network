@@ -159,6 +159,14 @@ export class NetworkManager {
       this._emit('peer-joined', peer);
       // Update probe scheduler with new peer list
       this._probeScheduler.setPeers(this._peerTable.getPeers());
+      // Trigger immediate probe when a broadcast peer joins so election
+      // can resolve dual-hub quickly instead of waiting for the next
+      // scheduled cycle (10s default).  Only for broadcast peers —
+      // static/cloud peers must not bypass the fallback cascade.
+      const broadcastPeers = this._broadcastLayer.getPeers();
+      if (broadcastPeers.some((bp) => bp.nodeId === peer.nodeId)) {
+        void this._probeScheduler.runOnce();
+      }
       this._recomputeTopology();
     });
     this._peerTable.on('peer-left', (nodeId) => {
