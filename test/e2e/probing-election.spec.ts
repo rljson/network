@@ -5,14 +5,24 @@
 // found in the LICENSE file in the root of this package.
 
 import { createServer, type AddressInfo, type Server } from 'node:net';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { NetworkManager } from '../../src/network-manager';
 import type { ProbeFn } from '../../src/probing/probe-scheduler';
 import { defaultNetworkConfig } from '../../src/types/network-config';
+import type { NetworkConfig } from '../../src/types/network-config';
 import type { PeerProbe } from '../../src/types/peer-probe';
+import { MockUdpHub } from '../helpers/mock-udp.ts';
 
 // .............................................................................
+
+/** Create a unique temp directory for identity persistence */
+function uniqueIdentityDir(): string {
+  return join(tmpdir(), 'rljson-network-test-' + randomUUID());
+}
 
 /**
  * End-to-end test: Probing + Election path.
@@ -29,11 +39,16 @@ import type { PeerProbe } from '../../src/types/peer-probe';
 describe('E2E: Probing + Election path', () => {
   let manager: NetworkManager;
   const servers: Array<{ stop: () => Promise<void> }> = [];
+  const extraManagers: NetworkManager[] = [];
 
   afterEach(async () => {
     if (manager?.isRunning()) {
       await manager.stop();
     }
+    for (const m of extraManagers) {
+      if (m.isRunning()) await m.stop();
+    }
+    extraManagers.length = 0;
     for (const s of servers) {
       await s.stop();
     }
@@ -261,5 +276,201 @@ describe('E2E: Probing + Election path', () => {
     // The hub should be determined by startedAt comparison,
     // NOT locked to self via incumbent advantage
     expect(topology2.hubNodeId).toBeTruthy();
+  });
+
+  it('defers self-election when broadcast peer with earlier startedAt is untested', async () => {
+    // Simulates simultaneous startup: two nodes discover each other via
+    // broadcast, but neither has port 3000 open yet (all probes fail).
+    // Only the node with earliest startedAt should self-elect.
+    // The other must defer to avoid multi-hub split-brain.
+
+    const hub = new MockUdpHub();
+
+    // Node A: earlier startedAt → should self-elect
+    const configA: NetworkConfig = {
+      domain: 'e2e-defer',
+      port: 3000,
+      identityDir: uniqueIdentityDir(),
+      broadcast: {
+        enabled: true,
+        port: 55558,
+        intervalMs: 50,
+        timeoutMs: 200,
+      },
+      probing: { enabled: true, intervalMs: 60000, timeoutMs: 100 },
+    };
+
+    // Node B: later startedAt → should DEFER
+    const configB: NetworkConfig = {
+      domain: 'e2e-defer',
+      port: 3001,
+      identityDir: uniqueIdentityDir(),
+      broadcast: {
+        enabled: true,
+        port: 55558,
+        intervalMs: 50,
+        timeoutMs: 200,
+      },
+      probing: { enabled: true, intervalMs: 60000, timeoutMs: 100 },
+    };
+
+    // All probes fail — nobody has port 3000 open yet
+    const noneReachable = new Set<string>();
+    const probeFn: ProbeFn = async (
+      _h,
+      _p,
+      fromNodeId,
+      toNodeId,
+    ): Promise<PeerProbe> => ({
+      fromNodeId,
+      toNodeId,
+      reachable: noneReachable.has(toNodeId),
+      latencyMs: -1,
+      measuredAt: Date.now(),
+    });
+
+    const managerA = new NetworkManager(configA, {
+      probeFn,
+      failThreshold: 1,
+      broadcastDeps: {
+        createSocket: hub.createSocketFn(),
+        selfTestTimeoutMs: 50,
+      },
+    });
+    extraManagers.push(managerA);
+
+    const managerB = new NetworkManager(configB, {
+      probeFn,
+      failThreshold: 1,
+      broadcastDeps: {
+        createSocket: hub.createSocketFn(),
+        selfTestTimeoutMs: 50,
+      },
+    });
+    extraManagers.push(managerB);
+
+    await managerA.start();
+    // Small delay so A has strictly earlier startedAt
+    await new Promise((r) => setTimeout(r, 10));
+    await managerB.start();
+
+    // Wait for broadcast discovery
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Both should have discovered each other via broadcast
+    const idA = managerA.getIdentity().nodeId;
+    const idB = managerB.getIdentity().nodeId;
+    expect(Object.keys(managerA.getTopology().nodes)).toContain(idB);
+    expect(Object.keys(managerB.getTopology().nodes)).toContain(idA);
+
+    // Run probes — all fail (no port 3000 open)
+    await managerA.getProbeScheduler().runOnce();
+    await managerB.getProbeScheduler().runOnce();
+
+    // Node A (earlier startedAt): should self-elect as hub
+    const topoA = managerA.getTopology();
+    expect(topoA.hubNodeId).toBe(idA);
+    expect(topoA.myRole).toBe('hub');
+
+    // Node B (later startedAt): should DEFER — not self-elect
+    const topoB = managerB.getTopology();
+    expect(topoB.hubNodeId).toBeNull();
+    expect(topoB.myRole).toBe('unassigned');
+  });
+
+  it('does NOT defer when crashed peer was previously reachable', async () => {
+    // Crash recovery: a broadcast peer was reachable (it was hub), then
+    // crashes.  The surviving node must NOT defer — it should self-elect.
+    const hub = new MockUdpHub();
+
+    const configA: NetworkConfig = {
+      domain: 'e2e-crash',
+      port: 3000,
+      identityDir: uniqueIdentityDir(),
+      broadcast: {
+        enabled: true,
+        port: 55559,
+        intervalMs: 50,
+        timeoutMs: 200,
+      },
+      probing: { enabled: true, intervalMs: 60000, timeoutMs: 100 },
+    };
+
+    const configB: NetworkConfig = {
+      domain: 'e2e-crash',
+      port: 3001,
+      identityDir: uniqueIdentityDir(),
+      broadcast: {
+        enabled: true,
+        port: 55559,
+        intervalMs: 50,
+        timeoutMs: 200,
+      },
+      probing: { enabled: true, intervalMs: 60000, timeoutMs: 100 },
+    };
+
+    // Probe function: initially A is reachable (it's the hub)
+    const reachable = new Set<string>();
+    const probeFn: ProbeFn = async (
+      _h,
+      _p,
+      fromNodeId,
+      toNodeId,
+    ): Promise<PeerProbe> => ({
+      fromNodeId,
+      toNodeId,
+      reachable: reachable.has(toNodeId),
+      latencyMs: reachable.has(toNodeId) ? 1 : -1,
+      measuredAt: Date.now(),
+    });
+
+    const managerA = new NetworkManager(configA, {
+      probeFn,
+      failThreshold: 1,
+      broadcastDeps: {
+        createSocket: hub.createSocketFn(),
+        selfTestTimeoutMs: 50,
+      },
+    });
+    extraManagers.push(managerA);
+
+    const managerB = new NetworkManager(configB, {
+      probeFn,
+      failThreshold: 1,
+      broadcastDeps: {
+        createSocket: hub.createSocketFn(),
+        selfTestTimeoutMs: 50,
+      },
+    });
+    extraManagers.push(managerB);
+
+    await managerA.start();
+    await new Promise((r) => setTimeout(r, 10));
+    await managerB.start();
+
+    // Wait for broadcast discovery
+    await new Promise((r) => setTimeout(r, 200));
+
+    const idA = managerA.getIdentity().nodeId;
+    const idB = managerB.getIdentity().nodeId;
+
+    // Phase 1: A is reachable (acting as hub with port 3000 open)
+    reachable.add(idA);
+    reachable.add(idB);
+    await managerB.getProbeScheduler().runOnce();
+
+    // B elects A as hub (A has earlier startedAt)
+    expect(managerB.getTopology().hubNodeId).toBe(idA);
+    expect(managerB.getTopology().myRole).toBe('client');
+
+    // Phase 2: A crashes — port 3000 closed, probes fail
+    reachable.delete(idA);
+    reachable.delete(idB);
+    await managerB.getProbeScheduler().runOnce();
+
+    // B should self-elect (NOT defer) because A was previously reachable
+    // (hasEverBeenReachable === true → crash, not startup race)
+    expect(managerB.getTopology().hubNodeId).toBe(idB);
+    expect(managerB.getTopology().myRole).toBe('hub');
   });
 });

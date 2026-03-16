@@ -400,6 +400,35 @@ export class NetworkManager {
       );
       /* v8 ignore else -- @preserve */
       if (result.hubId) {
+        // When election elects self (only self is reachable) but broadcast
+        // peers with earlier startedAt exist that have NEVER been successfully
+        // probed, defer self-election.  Those peers are likely still starting
+        // up (port 3000 not open yet).  Only the earliest node self-promotes;
+        // others wait for it to open its hub transport, then join as clients.
+        //
+        // This does NOT block re-election after a hub crash: a crashed peer
+        // was previously reachable (hasEverBeenReachable === true), so the
+        // deferral does not trigger.
+        if (
+          result.hubId === this._identity.nodeId &&
+          result.reason !== 'incumbent'
+        ) {
+          const selfInfo = this._identity.toNodeInfo();
+          const broadcastPeers = this._broadcastLayer.getPeers();
+          const hasUntestedEarlierPeer = broadcastPeers.some(
+            (p) =>
+              !this._probeScheduler.hasEverBeenReachable(p.nodeId) &&
+              (p.startedAt < selfInfo.startedAt ||
+                /* v8 ignore next -- @preserve */
+                (p.startedAt === selfInfo.startedAt &&
+                  p.nodeId < selfInfo.nodeId)),
+          );
+          if (hasUntestedEarlierPeer) {
+            // Don't self-elect — wait for the rightful winner to start
+            return { hubId: null, formedBy: 'election' };
+          }
+        }
+
         // Determine formedBy: 'broadcast' if broadcast layer contributed peers
         const formedBy: FormedBy =
           this._broadcastLayer.isActive() &&
