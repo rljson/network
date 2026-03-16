@@ -6,18 +6,7 @@
 
 // .............................................................................
 
-import type { NodeId, NodeInfo } from './types/node-info.ts';
-import type { NetworkConfig } from './types/network-config.ts';
-import type {
-  NetworkTopology,
-  FormedBy,
-  NodeRole,
-} from './types/network-topology.ts';
-import type {
-  TopologyChangedEvent,
-  RoleChangedEvent,
-  HubChangedEvent,
-} from './types/network-events.ts';
+import { electHub } from './election/hub-election.ts';
 import { NodeIdentity } from './identity/node-identity.ts';
 import {
   BroadcastLayer,
@@ -28,7 +17,18 @@ import { ManualLayer } from './layers/manual-layer.ts';
 import { StaticLayer } from './layers/static-layer.ts';
 import { PeerTable } from './peer-table.ts';
 import { ProbeScheduler, type ProbeFn } from './probing/probe-scheduler.ts';
-import { electHub } from './election/hub-election.ts';
+import type { NetworkConfig } from './types/network-config.ts';
+import type {
+  HubChangedEvent,
+  RoleChangedEvent,
+  TopologyChangedEvent,
+} from './types/network-events.ts';
+import type {
+  FormedBy,
+  NetworkTopology,
+  NodeRole,
+} from './types/network-topology.ts';
+import type { NodeId, NodeInfo } from './types/node-info.ts';
 
 // .............................................................................
 
@@ -373,10 +373,21 @@ export class NetworkManager {
         this._identity.toNodeInfo(),
         ...this._peerTable.getPeers(),
       ];
+
+      // Never apply incumbent advantage to self — self is always
+      // reachable, so it would always win via 'incumbent' and
+      // prevent a peer with an earlier startedAt from taking over.
+      // This avoids split-brain when two nodes start simultaneously
+      // and both elect themselves before discovering each other.
+      const effectiveIncumbent =
+        this._currentHubId === this._identity.nodeId
+          ? null
+          : this._currentHubId;
+
       const result = electHub(
         candidates,
         probes,
-        this._currentHubId,
+        effectiveIncumbent,
         this._identity.nodeId,
       );
       /* v8 ignore else -- @preserve */
