@@ -4,16 +4,16 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
-import { createServer, type AddressInfo, type Server } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { createServer, type AddressInfo, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { NetworkManager } from '../../src/network-manager';
 import type { ProbeFn } from '../../src/probing/probe-scheduler';
-import { defaultNetworkConfig } from '../../src/types/network-config';
 import type { NetworkConfig } from '../../src/types/network-config';
+import { defaultNetworkConfig } from '../../src/types/network-config';
 import type { PeerProbe } from '../../src/types/peer-probe';
 import { MockUdpHub } from '../helpers/mock-udp.ts';
 
