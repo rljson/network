@@ -382,15 +382,20 @@ export class NetworkManager {
         ...this._peerTable.getPeers(),
       ];
 
-      // Never apply incumbent advantage to self — self is always
-      // reachable, so it would always win via 'incumbent' and
-      // prevent a peer with an earlier startedAt from taking over.
-      // This avoids split-brain when two nodes start simultaneously
-      // and both elect themselves before discovering each other.
-      const effectiveIncumbent =
-        this._currentHubId === this._identity.nodeId
-          ? null
-          : this._currentHubId;
+      // Self-incumbent advantage: when this node IS the current hub,
+      // keep it as hub via incumbent status.  Self is always reachable,
+      // so the incumbent check in electHub() always passes.
+      //
+      // This is critical because TCP probes only reach the hub (port
+      // 3000).  Client nodes never open port 3000, so hub-side probes
+      // always fail for clients — without incumbent advantage the hub
+      // would re-elect every cycle, creating instability.
+      //
+      // The startup race (two nodes self-electing simultaneously) is
+      // handled separately by the deferral logic below (Fix 3), which
+      // ensures only the earliest-startedAt node self-promotes before
+      // any incumbent exists.
+      const effectiveIncumbent = this._currentHubId;
 
       const result = electHub(
         candidates,

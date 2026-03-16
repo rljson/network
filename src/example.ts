@@ -77,6 +77,7 @@ export const example = async () => {
   const config = {
     ...defaultNetworkConfig('office-sync', 3000),
     static: { hubAddress: '192.168.1.100:3000' },
+    probing: { enabled: false },
   };
   const manager = new NetworkManager(config);
 
