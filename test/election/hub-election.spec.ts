@@ -169,6 +169,19 @@ describe('HubElection', () => {
       });
     });
 
+    it('incumbent self yields on same startedAt with lower nodeId (tiebreaker)', () => {
+      const self = makeNode(selfId, 3000);
+      const nodeA = makeNode('aaa-node', 3000); // same startedAt, lower nodeId
+      const probes = [reachableProbe(selfId, 'aaa-node')];
+
+      // Same startedAt → tiebreaker: 'aaa-node' < selfId → self yields
+      const result = electHub([self, nodeA], probes, selfId, selfId);
+      expect(result).toEqual<ElectionResult>({
+        hubId: 'aaa-node',
+        reason: 'tiebreaker',
+      });
+    });
+
     it('incumbent self stays when no earlier reachable peer exists', () => {
       const self = makeNode(selfId, 1000);
       const nodeA = makeNode('node-a', 5000);
