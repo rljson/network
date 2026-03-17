@@ -6,9 +6,9 @@
 
 // .............................................................................
 
-import type { NodeInfo } from './node-info.ts';
 import type { NetworkTopology, NodeRole } from './network-topology.ts';
 import { exampleNetworkTopology } from './network-topology.ts';
+import type { NodeInfo } from './node-info.ts';
 
 /** Emitted when the network topology changes */
 export interface TopologyChangedEvent {
@@ -27,6 +27,14 @@ export interface HubChangedEvent {
   currentHub: string | null;
 }
 
+/** Log entry emitted by NetworkManager for internal state visibility */
+export interface NetworkLogEntry {
+  /** Log category */
+  category: 'election' | 'probe' | 'peer' | 'topology' | 'layer';
+  /** Human-readable message */
+  message: string;
+}
+
 /** Map of all events emitted by NetworkManager */
 export interface NetworkEventMap {
   'topology-changed': TopologyChangedEvent;
@@ -34,6 +42,7 @@ export interface NetworkEventMap {
   'hub-changed': HubChangedEvent;
   'peer-joined': NodeInfo;
   'peer-left': string;
+  log: NetworkLogEntry;
 }
 
 /** All valid network event names */
@@ -43,6 +52,7 @@ export const networkEventNames = [
   'hub-changed',
   'peer-joined',
   'peer-left',
+  'log',
 ] as const;
 
 export type NetworkEventName = (typeof networkEventNames)[number];
@@ -64,4 +74,10 @@ export const exampleRoleChangedEvent: RoleChangedEvent = {
 export const exampleHubChangedEvent: HubChangedEvent = {
   previousHub: null,
   currentHub: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+};
+
+/** Example NetworkLogEntry for tests and documentation */
+export const exampleNetworkLogEntry: NetworkLogEntry = {
+  category: 'election',
+  message: 'Elected: a1b2c3d4 (reason: earliest-start, formedBy: broadcast)',
 };
