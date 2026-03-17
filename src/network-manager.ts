@@ -20,6 +20,7 @@ import { ProbeScheduler, type ProbeFn } from './probing/probe-scheduler.ts';
 import type { NetworkConfig } from './types/network-config.ts';
 import type {
   HubChangedEvent,
+  NetworkLogEntry,
   RoleChangedEvent,
   TopologyChangedEvent,
 } from './types/network-events.ts';
@@ -39,6 +40,7 @@ export interface NetworkManagerEvents {
   'hub-changed': (event: HubChangedEvent) => void;
   'peer-joined': (peer: NodeInfo) => void;
   'peer-left': (nodeId: string) => void;
+  log: (entry: NetworkLogEntry) => void;
 }
 
 /** Valid event names for NetworkManager */
@@ -156,6 +158,14 @@ export class NetworkManager {
 
     // Listen for peer changes to trigger re-evaluation
     this._peerTable.on('peer-joined', (peer) => {
+      /* v8 ignore next -- @preserve */
+      const ip = peer.localIps[0] ?? '?';
+      this._log(
+        'peer',
+        `Joined: ${peer.hostname} (${peer.nodeId.slice(0, 8)}...) ` +
+          `${ip}:${peer.port}, ` +
+          `startedAt: ${new Date(peer.startedAt).toISOString()}`,
+      );
       this._emit('peer-joined', peer);
       // Update probe scheduler with new peer list
       this._probeScheduler.setPeers(this._peerTable.getPeers());
@@ -170,6 +180,7 @@ export class NetworkManager {
       this._recomputeTopology();
     });
     this._peerTable.on('peer-left', (nodeId) => {
+      this._log('peer', `Left: ${nodeId.slice(0, 8)}...`);
       this._emit('peer-left', nodeId);
       // Update probe scheduler with new peer list
       this._probeScheduler.setPeers(this._peerTable.getPeers());
@@ -193,7 +204,39 @@ export class NetworkManager {
 
     // Listen for probe updates to trigger re-election
     this._probeScheduler.on('probes-updated', () => {
+      const probes = this._probeScheduler.getProbes();
+      if (probes.length > 0) {
+        const reachable = probes.filter((p) => p.reachable).length;
+        const details = probes
+          .map((p) => {
+            const peer = this._peerTable.getPeer(p.toNodeId);
+            /* v8 ignore next -- @preserve */
+            const name = peer?.hostname ?? p.toNodeId.slice(0, 8);
+            return p.reachable
+              ? `${name}:OK(${p.latencyMs}ms)`
+              : `${name}:FAIL`;
+          })
+          .join(', ');
+        this._log(
+          'probe',
+          `Cycle: ${reachable}/${probes.length} reachable [${details}]`,
+        );
+      }
       this._recomputeTopology();
+    });
+
+    // Forward probe state transitions as log events
+    this._probeScheduler.on('peer-reachable', (nodeId, probe) => {
+      const peer = this._peerTable.getPeer(nodeId);
+      /* v8 ignore next -- @preserve */
+      const name = peer?.hostname ?? nodeId.slice(0, 8);
+      this._log('probe', `${name} became REACHABLE (${probe.latencyMs}ms)`);
+    });
+    this._probeScheduler.on('peer-unreachable', (nodeId) => {
+      const peer = this._peerTable.getPeer(nodeId);
+      /* v8 ignore next -- @preserve */
+      const name = peer?.hostname ?? nodeId.slice(0, 8);
+      this._log('probe', `${name} became UNREACHABLE`);
     });
 
     // Start layers (cascade priority: broadcast > cloud > static)
@@ -369,6 +412,7 @@ export class NetworkManager {
     // Override: manual always wins
     const manualHub = this._manualLayer.getAssignedHub();
     if (manualHub) {
+      this._log('election', `Manual override: hub=${manualHub.slice(0, 8)}...`);
       return { hubId: manualHub, formedBy: 'manual' };
     }
 
@@ -429,6 +473,10 @@ export class NetworkManager {
                   p.nodeId < selfInfo.nodeId)),
           );
           if (hasUntestedEarlierPeer) {
+            this._log(
+              'election',
+              `Deferring self-election: untested earlier broadcast peer exists`,
+            );
             // Don't self-elect — wait for the rightful winner to start
             return { hubId: null, formedBy: 'election' };
           }
@@ -440,6 +488,11 @@ export class NetworkManager {
           this._broadcastLayer.getPeers().length > 0
             ? 'broadcast'
             : 'election';
+        this._log(
+          'election',
+          `Elected: ${result.hubId.slice(0, 8)}... ` +
+            `(reason: ${result.reason}, formedBy: ${formedBy})`,
+        );
         return { hubId: result.hubId, formedBy };
       }
     }
@@ -448,6 +501,7 @@ export class NetworkManager {
     if (this._cloudLayer.isActive()) {
       const cloudHub = this._cloudLayer.getAssignedHub();
       if (cloudHub) {
+        this._log('election', `Cloud assigned hub: ${cloudHub.slice(0, 8)}...`);
         return { hubId: cloudHub, formedBy: 'cloud' };
       }
     }
@@ -457,6 +511,7 @@ export class NetworkManager {
       const staticHub = this._staticLayer.getAssignedHub();
       /* v8 ignore else -- @preserve */
       if (staticHub) {
+        this._log('election', `Static hub: ${staticHub.slice(0, 8)}...`);
         return { hubId: staticHub, formedBy: 'static' };
       }
     }
@@ -487,6 +542,11 @@ export class NetworkManager {
 
     // Emit hub-changed if hub changed
     if (previousHub !== this._currentHubId) {
+      this._log(
+        'topology',
+        `Hub changed: ${previousHub?.slice(0, 8) ?? 'none'} → ` +
+          `${this._currentHubId?.slice(0, 8) ?? 'none'} (formedBy: ${formedBy})`,
+      );
       this._emit('hub-changed', {
         previousHub,
         currentHub: this._currentHubId,
@@ -495,6 +555,10 @@ export class NetworkManager {
 
     // Emit role-changed if role changed
     if (previousRole !== this._currentRole) {
+      this._log(
+        'topology',
+        `Role changed: ${previousRole} → ${this._currentRole}`,
+      );
       this._emit('role-changed', {
         previous: previousRole,
         current: this._currentRole,
@@ -531,6 +595,15 @@ export class NetworkManager {
     }
 
     return null;
+  }
+
+  /**
+   * Emit a structured log event for internal state visibility.
+   * @param category - The log category
+   * @param message - The log message
+   */
+  private _log(category: NetworkLogEntry['category'], message: string): void {
+    this._emit('log', { category, message });
   }
 
   /**

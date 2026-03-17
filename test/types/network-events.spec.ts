@@ -6,18 +6,20 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  networkEventNames,
-  exampleTopologyChangedEvent,
-  exampleRoleChangedEvent,
-  exampleHubChangedEvent,
-} from '../../src/types/network-events';
 import type {
-  TopologyChangedEvent,
-  RoleChangedEvent,
   HubChangedEvent,
   NetworkEventMap,
   NetworkEventName,
+  NetworkLogEntry,
+  RoleChangedEvent,
+  TopologyChangedEvent,
+} from '../../src/types/network-events';
+import {
+  exampleHubChangedEvent,
+  exampleNetworkLogEntry,
+  exampleRoleChangedEvent,
+  exampleTopologyChangedEvent,
+  networkEventNames,
 } from '../../src/types/network-events';
 
 describe('NetworkEvents', () => {
@@ -28,10 +30,11 @@ describe('NetworkEvents', () => {
       expect(networkEventNames).toContain('hub-changed');
       expect(networkEventNames).toContain('peer-joined');
       expect(networkEventNames).toContain('peer-left');
+      expect(networkEventNames).toContain('log');
     });
 
-    it('has exactly 5 event names', () => {
-      expect(networkEventNames).toHaveLength(5);
+    it('has exactly 6 event names', () => {
+      expect(networkEventNames).toHaveLength(6);
     });
 
     it('is readonly', () => {
@@ -67,6 +70,14 @@ describe('NetworkEvents', () => {
     });
   });
 
+  describe('exampleNetworkLogEntry', () => {
+    it('has category and message', () => {
+      const entry: NetworkLogEntry = exampleNetworkLogEntry;
+      expect(entry.category).toBe('election');
+      expect(entry.message).toContain('Elected');
+    });
+  });
+
   it('NetworkEventMap type is consistent', () => {
     // Validate that example events match their expected map types
     const map: Partial<{
@@ -75,9 +86,11 @@ describe('NetworkEvents', () => {
       'topology-changed': exampleTopologyChangedEvent,
       'role-changed': exampleRoleChangedEvent,
       'hub-changed': exampleHubChangedEvent,
+      log: exampleNetworkLogEntry,
     };
     expect(map['topology-changed']).toBeDefined();
     expect(map['role-changed']).toBeDefined();
     expect(map['hub-changed']).toBeDefined();
+    expect(map['log']).toBeDefined();
   });
 });
