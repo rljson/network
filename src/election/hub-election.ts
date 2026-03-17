@@ -86,11 +86,10 @@ export function electHub(
       if (currentHubId === selfId) {
         const incumbentInfo = reachableCandidates.find(
           (c) => c.nodeId === selfId,
-        );
+        )!;
         const earlierReachablePeer = reachableCandidates.some(
           (c) =>
             c.nodeId !== selfId &&
-            incumbentInfo !== undefined &&
             (c.startedAt < incumbentInfo.startedAt ||
               (c.startedAt === incumbentInfo.startedAt &&
                 c.nodeId < incumbentInfo.nodeId)),
