@@ -156,12 +156,38 @@ describe('HubElection', () => {
       expect(result.reason).toBe('earliest-start');
     });
 
-    it('incumbent self stays elected', () => {
+    it('incumbent self yields to earlier reachable peer (dual-hub resolution)', () => {
       const self = makeNode(selfId, 5000);
       const nodeA = makeNode('node-a', 1000);
       const probes = [reachableProbe(selfId, 'node-a')];
 
-      // Self was hub and is always reachable
+      // Self was hub but node-a is reachable (also hub) and started earlier
+      const result = electHub([self, nodeA], probes, selfId, selfId);
+      expect(result).toEqual<ElectionResult>({
+        hubId: 'node-a',
+        reason: 'earliest-start',
+      });
+    });
+
+    it('incumbent self stays when no earlier reachable peer exists', () => {
+      const self = makeNode(selfId, 1000);
+      const nodeA = makeNode('node-a', 5000);
+      const probes = [reachableProbe(selfId, 'node-a')];
+
+      // Self is incumbent AND has earliest startedAt → stays
+      const result = electHub([self, nodeA], probes, selfId, selfId);
+      expect(result).toEqual<ElectionResult>({
+        hubId: selfId,
+        reason: 'incumbent',
+      });
+    });
+
+    it('incumbent self stays when other peers are unreachable', () => {
+      const self = makeNode(selfId, 5000);
+      const nodeA = makeNode('node-a', 1000);
+      const probes = [unreachableProbe(selfId, 'node-a')];
+
+      // node-a started earlier but is unreachable → self keeps incumbent
       const result = electHub([self, nodeA], probes, selfId, selfId);
       expect(result).toEqual<ElectionResult>({
         hubId: selfId,

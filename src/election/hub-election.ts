@@ -72,12 +72,36 @@ export function electHub(
   }
 
   // Rule 2: Incumbent advantage — if current hub is reachable, keep it
+  // Exception: when the incumbent is self and another reachable peer
+  // has an earlier startedAt, the incumbent must yield.  A reachable
+  // peer has an open hub port — meaning it's ALSO acting as hub.
+  // Without this check, dual-hub situations lock in permanently.
   if (currentHubId !== null) {
     const incumbentStillReachable = reachableCandidates.some(
       (c) => c.nodeId === currentHubId,
     );
     if (incumbentStillReachable) {
-      return { hubId: currentHubId, reason: 'incumbent' };
+      // Check for dual-hub: if incumbent is self and another reachable
+      // peer started earlier, fall through to normal election to resolve.
+      if (currentHubId === selfId) {
+        const incumbentInfo = reachableCandidates.find(
+          (c) => c.nodeId === selfId,
+        );
+        const earlierReachablePeer = reachableCandidates.some(
+          (c) =>
+            c.nodeId !== selfId &&
+            incumbentInfo !== undefined &&
+            (c.startedAt < incumbentInfo.startedAt ||
+              (c.startedAt === incumbentInfo.startedAt &&
+                c.nodeId < incumbentInfo.nodeId)),
+        );
+        if (!earlierReachablePeer) {
+          return { hubId: currentHubId, reason: 'incumbent' };
+        }
+        // Fall through: another reachable peer has priority → re-elect
+      } else {
+        return { hubId: currentHubId, reason: 'incumbent' };
+      }
     }
   }
 
