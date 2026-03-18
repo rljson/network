@@ -10,6 +10,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type {
+  CloudHttpClient,
+  CloudPeerListResponse,
+} from '../../src/layers/cloud-layer';
 import { NetworkManager } from '../../src/network-manager';
 import type { ProbeFn } from '../../src/probing/probe-scheduler';
 import type { NetworkConfig } from '../../src/types/network-config';
@@ -472,5 +476,89 @@ describe('E2E: Probing + Election path', () => {
     // (hasEverBeenReachable === true → crash, not startup race)
     expect(managerB.getTopology().hubNodeId).toBe(idB);
     expect(managerB.getTopology().myRole).toBe('hub');
+  });
+
+  it('defers self-election when cloud peer with earlier startedAt is untested', async () => {
+    // Reproduces the split-brain bug: two nodes in different subnets discover
+    // each other only via cloud (no broadcast).  The later-started node must
+    // NOT self-elect while the earlier-started cloud peer exists but has never
+    // been probed.  Instead it should fall through to cloud/static cascade.
+
+    class MockCloud implements CloudHttpClient {
+      response: CloudPeerListResponse = { peers: [], assignedHub: null };
+      register(): Promise<CloudPeerListResponse> {
+        return Promise.resolve(this.response);
+      }
+      poll(): Promise<CloudPeerListResponse> {
+        return Promise.resolve(this.response);
+      }
+      reportProbes(): Promise<void> {
+        return Promise.resolve();
+      }
+    }
+
+    // All probes fail — cloud peer's port 3000 not open yet
+    const probeFn: ProbeFn = async (
+      _h,
+      _p,
+      fromNodeId,
+      toNodeId,
+    ): Promise<PeerProbe> => ({
+      fromNodeId,
+      toNodeId,
+      reachable: false,
+      latencyMs: -1,
+      measuredAt: Date.now(),
+    });
+
+    // Cloud provides a peer that started 60 seconds earlier than self.
+    // No broadcast: nodes are on different subnets.
+    const cloudMock = new MockCloud();
+    cloudMock.response = {
+      peers: [
+        {
+          nodeId: 'early-cloud-node',
+          hostname: 'server-A',
+          localIps: ['192.168.1.94'],
+          domain: 'e2e-cloud-defer',
+          port: 3000,
+          startedAt: Date.now() - 60_000, // started 60s ago
+        },
+      ],
+      assignedHub: null, // no cloud assignment yet
+    };
+
+    const config: NetworkConfig = {
+      ...defaultNetworkConfig('e2e-cloud-defer', 3000),
+      cloud: {
+        enabled: true,
+        endpoint: 'http://cloud.test',
+        pollIntervalMs: 999999, // disable auto-poll
+      },
+      probing: { enabled: true, intervalMs: 60000, timeoutMs: 100 },
+    };
+
+    manager = new NetworkManager(config, {
+      probeFn,
+      failThreshold: 1,
+      cloudDeps: { createHttpClient: () => cloudMock },
+    });
+    await manager.start();
+
+    // Cloud peer should be registered in the peer table
+    const selfId = manager.getIdentity().nodeId;
+
+    // Run probes — cloud peer is unreachable (port not open yet)
+    await manager.getProbeScheduler().runOnce();
+
+    // Self should NOT self-elect because cloud provides a peer with
+    // earlier startedAt that has never been successfully probed.
+    // This is the bug fix: previously only broadcast peers were checked,
+    // so cloud peers were ignored and self would self-elect (split-brain).
+    const topology = manager.getTopology();
+    expect(topology.hubNodeId).not.toBe(selfId);
+    // Should fall through to cloud or remain unassigned
+    // (no cloud assignment and no static config → unassigned)
+    expect(topology.myRole).not.toBe('hub');
   });
 });

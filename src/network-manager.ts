@@ -449,22 +449,35 @@ export class NetworkManager {
       );
       /* v8 ignore else -- @preserve */
       if (result.hubId) {
-        // When election elects self (only self is reachable) but broadcast
-        // peers with earlier startedAt exist that have NEVER been successfully
-        // probed, defer self-election.  Those peers are likely still starting
-        // up (port 3000 not open yet).  Only the earliest node self-promotes;
-        // others wait for it to open its hub transport, then join as clients.
+        // When election elects self (only self is reachable) but a real peer
+        // (from broadcast or cloud — NOT synthetic static peers) with earlier
+        // startedAt exists that has NEVER been successfully probed, defer
+        // self-election.  Those peers are likely still starting up (port 3000
+        // not open yet).  Only the earliest node self-promotes; others wait
+        // for it to open its hub transport, then join as clients.
+        //
+        // We check both broadcast AND cloud peers because a node discovered
+        // via cloud with earlier startedAt should also prevent self-election.
+        // Static peers are excluded: they use synthetic startedAt=0 which
+        // would always trigger false deferrals.
         //
         // This does NOT block re-election after a hub crash: a crashed peer
         // was previously reachable (hasEverBeenReachable === true), so the
         // deferral does not trigger.
+        //
+        // When deferred, we fall through to the cloud/static cascade so the
+        // node can still join as client under a cloud-assigned hub instead
+        // of becoming unassigned.
         if (
           result.hubId === this._identity.nodeId &&
           result.reason !== 'incumbent'
         ) {
           const selfInfo = this._identity.toNodeInfo();
-          const broadcastPeers = this._broadcastLayer.getPeers();
-          const hasUntestedEarlierPeer = broadcastPeers.some(
+          const realPeers = [
+            ...this._broadcastLayer.getPeers(),
+            ...this._cloudLayer.getPeers(),
+          ];
+          const hasUntestedEarlierPeer = realPeers.some(
             (p) =>
               !this._probeScheduler.hasEverBeenReachable(p.nodeId) &&
               (p.startedAt < selfInfo.startedAt ||
@@ -475,25 +488,38 @@ export class NetworkManager {
           if (hasUntestedEarlierPeer) {
             this._log(
               'election',
-              `Deferring self-election: untested earlier broadcast peer exists`,
+              `Deferring self-election: untested earlier peer exists`,
             );
-            // Don't self-elect — wait for the rightful winner to start
-            return { hubId: null, formedBy: 'election' };
+            // Fall through to cloud/static cascade instead of self-electing.
+            // Do NOT return here — let the cascade handle it.
+          } else {
+            // Determine formedBy: 'broadcast' if broadcast layer contributed peers
+            const formedBy: FormedBy =
+              this._broadcastLayer.isActive() &&
+              this._broadcastLayer.getPeers().length > 0
+                ? 'broadcast'
+                : 'election';
+            this._log(
+              'election',
+              `Elected: ${result.hubId.slice(0, 8)}... ` +
+                `(reason: ${result.reason}, formedBy: ${formedBy})`,
+            );
+            return { hubId: result.hubId, formedBy };
           }
+        } else {
+          // Determine formedBy: 'broadcast' if broadcast layer contributed peers
+          const formedBy: FormedBy =
+            this._broadcastLayer.isActive() &&
+            this._broadcastLayer.getPeers().length > 0
+              ? 'broadcast'
+              : 'election';
+          this._log(
+            'election',
+            `Elected: ${result.hubId.slice(0, 8)}... ` +
+              `(reason: ${result.reason}, formedBy: ${formedBy})`,
+          );
+          return { hubId: result.hubId, formedBy };
         }
-
-        // Determine formedBy: 'broadcast' if broadcast layer contributed peers
-        const formedBy: FormedBy =
-          this._broadcastLayer.isActive() &&
-          this._broadcastLayer.getPeers().length > 0
-            ? 'broadcast'
-            : 'election';
-        this._log(
-          'election',
-          `Elected: ${result.hubId.slice(0, 8)}... ` +
-            `(reason: ${result.reason}, formedBy: ${formedBy})`,
-        );
-        return { hubId: result.hubId, formedBy };
       }
     }
 
