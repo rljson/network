@@ -10,7 +10,28 @@ found in the LICENSE file in the root of this package.
 
 ## Table of contents <!-- omit in toc -->
 
+- [Hub election looks correct but clients stay on old hub](#hub-election-looks-correct-but-clients-stay-on-old-hub)
 - [Vscode Windows: Debugging is not working](#vscode-windows-debugging-is-not-working)
+
+## Hub election looks correct but clients stay on old hub
+
+Date: 2026-03-20
+
+**Problem:**
+
+NetworkManager correctly emits `hub-changed` when the elected hub changes, but clients in `@rljson/server` stayed connected to the old hub, causing split-brain.
+
+**Root Cause:**
+
+This was NOT a bug in `@rljson/network`. The `hub-changed` event was emitted correctly. The problem was in `@rljson/server`'s Node class which only listened to `role-changed` and ignored `hub-changed`.
+
+**Fix:**
+
+`@rljson/server@0.0.14` — Node now subscribes to both `role-changed` and `hub-changed` events.
+
+**Lesson:**
+
+When debugging topology issues, check both the emitter (`NetworkManager`) and the consumer (`Node`). The event was correct — the listener was missing.
 
 ## Vscode Windows: Debugging is not working
 
