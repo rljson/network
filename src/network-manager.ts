@@ -620,6 +620,14 @@ export class NetworkManager {
       return `${ip}:${peer.port}`;
     }
 
+    // If hub is self, resolve from own identity (peer table excludes self)
+    if (this._identity && this._currentHubId === this._identity.nodeId) {
+      const selfInfo = this._identity.toNodeInfo();
+      /* v8 ignore next -- @preserve */
+      const ip = selfInfo.localIps[0] ?? 'unknown';
+      return `${ip}:${selfInfo.port}`;
+    }
+
     return null;
   }
 
