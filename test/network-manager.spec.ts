@@ -432,6 +432,18 @@ describe('NetworkManager', () => {
       const topology = manager.getTopology();
       expect(topology.hubAddress).toBeNull();
     });
+
+    it('resolves address from self identity when hub is self', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+
+      const selfId = manager.getIdentity().nodeId;
+      manager.assignHub(selfId);
+
+      const topology = manager.getTopology();
+      expect(topology.hubAddress).not.toBeNull();
+      expect(topology.hubAddress).toMatch(/:\d+$/);
+    });
   });
 
   // .........................................................................
