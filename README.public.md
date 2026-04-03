@@ -324,6 +324,10 @@ manager.assignHub('custom-hub-id');
 manager.clearOverride();
 // Back to formedBy: 'static'
 
+// Temporarily exclude a node from hub election (e.g., after self-check failure)
+manager.excludeFromElection('node-id', 60_000); // 60 seconds
+manager.isExcludedFromElection('node-id'); // → true
+
 await manager.stop();
 ```
 
@@ -333,10 +337,13 @@ The `NetworkManager` evaluates hub assignment in this order:
 
 1. **Manual override** → human knows best
 2. **Election via probing** → probes determine reachable peers, election picks hub
+   - Nodes excluded via `excludeFromElection()` are filtered out of candidates
    - `formedBy: 'broadcast'` when broadcast layer is active with peers
    - `formedBy: 'election'` otherwise
 3. **Cloud assignment** → cloud dictates hub (has the full picture)
+   - Rejected if the assigned hub is known-unreachable via probes or excluded
 4. **Static config** → last resort
+   - Rejected if the static hub is known-unreachable via probes or excluded
 5. **Nothing** → `myRole = 'unassigned'`
 
 ## Hub Election
@@ -363,9 +370,10 @@ const result: ElectionResult = electHub(candidates, probes, null, 'self');
 
 Election rules:
 1. Filter candidates to reachable peers only (self is always reachable)
-2. **Incumbent advantage**: keep current hub if still reachable
-3. **Earliest `startedAt`** wins among reachable candidates
-4. **Tiebreaker**: lexicographic `nodeId` comparison
+2. Filter out nodes excluded via `excludeFromElection()`
+3. **Incumbent advantage**: keep current hub if still reachable
+4. **Earliest `startedAt`** wins among reachable candidates
+5. **Tiebreaker**: lexicographic `nodeId` comparison
 
 ## Probing
 

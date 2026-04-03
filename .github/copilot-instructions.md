@@ -36,9 +36,11 @@ The network package knows **nothing** about Io, Bs, Db, trees, hashes, or sync. 
 
 ### Hub Election Rules
 
-1. **Incumbent advantage**: If there is already a hub and it's still reachable, keep it.
-2. **Earliest `startedAt`**: If no incumbent, the node with the earliest startup timestamp wins.
-3. **Tiebreaker**: Lexicographic `nodeId` comparison (astronomically rare).
+1. **Excluded nodes filtered out**: Nodes excluded via `excludeFromElection()` are removed from candidates.
+2. **Incumbent advantage**: If there is already a hub and it's still reachable, keep it.
+3. **Earliest `startedAt`**: If no incumbent, the node with the earliest startup timestamp wins.
+4. **Tiebreaker**: Lexicographic `nodeId` comparison (astronomically rare).
+5. **Cloud/static reachability**: Hub suggestions from cloud or static layers are rejected if the suggested hub is known-unreachable (via probes) or excluded from election.
 
 ### Flap Dampening
 

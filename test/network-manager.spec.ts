@@ -850,4 +850,311 @@ describe('NetworkManager', () => {
       expect(probe.reachable).toBe(false);
     });
   });
+
+  // .........................................................................
+  // Exclude from election
+  // .........................................................................
+
+  describe('excludeFromElection', () => {
+    it('excludes a node and isExcludedFromElection returns true', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+
+      const selfId = manager.getIdentity().nodeId;
+      expect(manager.isExcludedFromElection(selfId)).toBe(false);
+
+      manager.excludeFromElection(selfId, 60000);
+      expect(manager.isExcludedFromElection(selfId)).toBe(true);
+    });
+
+    it('exclusion expires after duration', async () => {
+      vi.useFakeTimers();
+      try {
+        manager = new NetworkManager(testConfig());
+        await manager.start();
+
+        const selfId = manager.getIdentity().nodeId;
+        manager.excludeFromElection(selfId, 1000);
+        expect(manager.isExcludedFromElection(selfId)).toBe(true);
+
+        vi.advanceTimersByTime(1001);
+        expect(manager.isExcludedFromElection(selfId)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('isExcludedFromElection returns false for unknown node', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+      expect(manager.isExcludedFromElection('unknown-node')).toBe(false);
+    });
+
+    it('excluded self does not win election', async () => {
+      const mockProbe: ProbeFn = async (
+        _h,
+        _p,
+        fromNodeId,
+        toNodeId,
+      ): Promise<PeerProbe> => ({
+        fromNodeId,
+        toNodeId,
+        reachable: true,
+        latencyMs: 1.0,
+        measuredAt: Date.now(),
+      });
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '10.0.0.1:3000' },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        { probeFn: mockProbe },
+      );
+      await manager.start();
+      await manager.getProbeScheduler().runOnce();
+
+      // Without exclusion, self or static-hub wins election
+      const beforeTopology = manager.getTopology();
+      expect(beforeTopology.hubNodeId).toBeTruthy();
+
+      // Exclude self — should fall through to a different hub or static
+      const selfId = manager.getIdentity().nodeId;
+      manager.excludeFromElection(selfId, 60000);
+
+      // Recompute happens automatically in excludeFromElection
+      const afterTopology = manager.getTopology();
+      // Self should NOT be the hub
+      expect(afterTopology.hubNodeId).not.toBe(selfId);
+    });
+
+    it('exclusion is cleared on stop', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+
+      const selfId = manager.getIdentity().nodeId;
+      manager.excludeFromElection(selfId, 60000);
+      expect(manager.isExcludedFromElection(selfId)).toBe(true);
+
+      await manager.stop();
+      // After stop, internal state is cleared — if restarted, no exclusion
+      await manager.start();
+      expect(manager.isExcludedFromElection(selfId)).toBe(false);
+    });
+  });
+
+  // .........................................................................
+  // Cloud/static reachability check
+  // .........................................................................
+
+  describe('cloud/static reachability check', () => {
+    it('rejects cloud hub that is known unreachable', async () => {
+      const mock = new MockCloudService();
+      mock.nextResponse = {
+        peers: [
+          {
+            nodeId: 'unreachable-hub',
+            hostname: 'bad-hub',
+            localIps: ['10.0.0.99'],
+            domain: 'test-domain',
+            port: 3000,
+            startedAt: 1700000000000,
+          },
+        ],
+        assignedHub: 'unreachable-hub',
+      };
+
+      // Mock probe that marks the cloud hub as unreachable
+      const mockProbe: ProbeFn = async (
+        _h,
+        _p,
+        fromNodeId,
+        toNodeId,
+      ): Promise<PeerProbe> => ({
+        fromNodeId,
+        toNodeId,
+        reachable: false,
+        latencyMs: -1,
+        measuredAt: Date.now(),
+      });
+
+      manager = new NetworkManager(
+        testConfig({
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        { cloudDeps: createMockCloudDeps(mock), probeFn: mockProbe },
+      );
+      await manager.start();
+
+      // Run probes — cloud hub becomes known-unreachable
+      await manager.getProbeScheduler().runOnce();
+
+      const topology = manager.getTopology();
+      // Cloud hub should NOT be accepted
+      expect(topology.hubNodeId).not.toBe('unreachable-hub');
+    });
+
+    it('rejects static hub that is known unreachable', async () => {
+      // Mock probe that always reports unreachable
+      const mockProbe: ProbeFn = async (
+        _h,
+        _p,
+        fromNodeId,
+        toNodeId,
+      ): Promise<PeerProbe> => ({
+        fromNodeId,
+        toNodeId,
+        reachable: false,
+        latencyMs: -1,
+        measuredAt: Date.now(),
+      });
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '10.0.0.1:3000' },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        { probeFn: mockProbe },
+      );
+      await manager.start();
+
+      // Run probes — static hub becomes known-unreachable
+      await manager.getProbeScheduler().runOnce();
+
+      const topology = manager.getTopology();
+      // Static hub should NOT be accepted; should fall through to unassigned
+      // (since election only has self who wins, but self isn't from static)
+      expect(topology.hubNodeId).not.toBe('static-hub-10.0.0.1:3000');
+    });
+
+    it('rejects excluded cloud hub', async () => {
+      const mock = new MockCloudService();
+      mock.nextResponse = {
+        peers: [
+          {
+            nodeId: 'excluded-hub',
+            hostname: 'ex-hub',
+            localIps: ['10.0.0.50'],
+            domain: 'test-domain',
+            port: 3000,
+            startedAt: 1700000000000,
+          },
+        ],
+        assignedHub: 'excluded-hub',
+      };
+
+      manager = new NetworkManager(
+        testConfig({
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+        }),
+        { cloudDeps: createMockCloudDeps(mock) },
+      );
+      await manager.start();
+
+      // Cloud hub initially accepted
+      expect(manager.getTopology().hubNodeId).toBe('excluded-hub');
+
+      // Exclude the cloud hub
+      manager.excludeFromElection('excluded-hub', 60000);
+
+      // After exclusion, cloud hub should be rejected
+      expect(manager.getTopology().hubNodeId).not.toBe('excluded-hub');
+    });
+
+    it('rejects excluded static hub', async () => {
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '10.0.0.1:3000' },
+        }),
+      );
+      await manager.start();
+
+      // Static hub initially accepted
+      expect(manager.getTopology().hubNodeId).toBe(
+        'static-hub-10.0.0.1:3000',
+      );
+
+      // Exclude the static hub
+      manager.excludeFromElection('static-hub-10.0.0.1:3000', 60000);
+
+      // After exclusion, static hub should be rejected → unassigned
+      const topology = manager.getTopology();
+      expect(topology.hubNodeId).not.toBe('static-hub-10.0.0.1:3000');
+    });
+
+    it('accepts cloud hub when cloud suggests self', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+
+      const selfId = manager.getIdentity().nodeId;
+
+      const mock = new MockCloudService();
+      mock.nextResponse = {
+        peers: [],
+        assignedHub: selfId,
+      };
+
+      await manager.stop();
+
+      manager = new NetworkManager(
+        testConfig({
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+        }),
+        { cloudDeps: createMockCloudDeps(mock) },
+      );
+      await manager.start();
+
+      // Cloud suggests self — should be accepted (self is always reachable)
+      const topology = manager.getTopology();
+      expect(topology.hubNodeId).toBe(selfId);
+      expect(topology.formedBy).toBe('cloud');
+    });
+
+    it('accepts cloud hub that has not been probed yet', async () => {
+      const mock = new MockCloudService();
+      mock.nextResponse = {
+        peers: [
+          {
+            nodeId: 'new-hub',
+            hostname: 'new',
+            localIps: ['10.0.0.50'],
+            domain: 'test-domain',
+            port: 3000,
+            startedAt: 1700000000000,
+          },
+        ],
+        assignedHub: 'new-hub',
+      };
+
+      manager = new NetworkManager(
+        testConfig({
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+        }),
+        { cloudDeps: createMockCloudDeps(mock) },
+      );
+      await manager.start();
+
+      // No probes have run — cloud hub should be accepted (unknown ≠ unreachable)
+      const topology = manager.getTopology();
+      expect(topology.hubNodeId).toBe('new-hub');
+      expect(topology.formedBy).toBe('cloud');
+    });
+  });
 });

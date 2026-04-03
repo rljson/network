@@ -99,6 +99,12 @@ export class NetworkManager {
   /** Event listeners */
   private _listeners = new Map<string, Set<Listener>>();
 
+  /**
+   * Nodes temporarily excluded from hub election.
+   * Maps nodeId to expiry timestamp (Date.now() + durationMs).
+   */
+  private _excludedNodes = new Map<NodeId, number>();
+
   /** Current topology snapshot */
   private _currentHubId: NodeId | null = null;
   private _currentRole: NodeRole = 'unassigned';
@@ -274,6 +280,7 @@ export class NetworkManager {
 
     this._peerTable.clear();
     this._listeners.clear();
+    this._excludedNodes.clear();
 
     this._currentHubId = null;
     this._currentRole = 'unassigned';
@@ -356,6 +363,41 @@ export class NetworkManager {
     this._manualLayer.clearOverride();
   }
 
+  /**
+   * Temporarily exclude a node from hub election.
+   *
+   * Used by hub self-check: when a hub discovers it cannot accept
+   * inbound connections (zero clients after timeout), it excludes
+   * itself so the next election picks a different node.
+   * The exclusion expires after {@link durationMs} to allow recovery
+   * (e.g. if the firewall is fixed).
+   * @param nodeId - The node to exclude
+   * @param durationMs - How long to exclude (milliseconds)
+   */
+  excludeFromElection(nodeId: NodeId, durationMs: number): void {
+    this._excludedNodes.set(nodeId, Date.now() + durationMs);
+    this._log(
+      'election',
+      `Excluded ${nodeId.slice(0, 8)}... from election for ${durationMs}ms`,
+    );
+    this._recomputeTopology();
+  }
+
+  /**
+   * Check whether a node is currently excluded from election.
+   * @param nodeId - The node to check
+   * @returns true if the node is excluded from election
+   */
+  isExcludedFromElection(nodeId: NodeId): boolean {
+    const expiry = this._excludedNodes.get(nodeId);
+    if (expiry === undefined) return false;
+    if (Date.now() >= expiry) {
+      this._excludedNodes.delete(nodeId);
+      return false;
+    }
+    return true;
+  }
+
   // .........................................................................
   // Events
   // .........................................................................
@@ -420,11 +462,12 @@ export class NetworkManager {
     // If we have probe results, use election algorithm
     const probes = this._probeScheduler.getProbes();
     if (probes.length > 0 && this._identity) {
-      // Build candidates: self + all known peers
+      // Build candidates: self + all known peers, excluding temporarily
+      // excluded nodes (e.g. nodes that failed hub self-check).
       const candidates: NodeInfo[] = [
         this._identity.toNodeInfo(),
         ...this._peerTable.getPeers(),
-      ];
+      ].filter((c) => !this.isExcludedFromElection(c.nodeId));
 
       // Self-incumbent advantage: when this node IS the current hub,
       // keep it as hub via incumbent status.  Self is always reachable,
@@ -527,8 +570,19 @@ export class NetworkManager {
     if (this._cloudLayer.isActive()) {
       const cloudHub = this._cloudLayer.getAssignedHub();
       if (cloudHub) {
-        this._log('election', `Cloud assigned hub: ${cloudHub.slice(0, 8)}...`);
-        return { hubId: cloudHub, formedBy: 'cloud' };
+        if (this._isKnownUnreachableOrExcluded(cloudHub)) {
+          this._log(
+            'election',
+            `Rejecting cloud hub ${cloudHub.slice(0, 8)}... ` +
+              `(unreachable or excluded)`,
+          );
+        } else {
+          this._log(
+            'election',
+            `Cloud assigned hub: ${cloudHub.slice(0, 8)}...`,
+          );
+          return { hubId: cloudHub, formedBy: 'cloud' };
+        }
       }
     }
 
@@ -537,8 +591,16 @@ export class NetworkManager {
       const staticHub = this._staticLayer.getAssignedHub();
       /* v8 ignore else -- @preserve */
       if (staticHub) {
-        this._log('election', `Static hub: ${staticHub.slice(0, 8)}...`);
-        return { hubId: staticHub, formedBy: 'static' };
+        if (this._isKnownUnreachableOrExcluded(staticHub)) {
+          this._log(
+            'election',
+            `Rejecting static hub ${staticHub.slice(0, 8)}... ` +
+              `(unreachable or excluded)`,
+          );
+        } else {
+          this._log('election', `Static hub: ${staticHub.slice(0, 8)}...`);
+          return { hubId: staticHub, formedBy: 'static' };
+        }
       }
     }
 
@@ -629,6 +691,25 @@ export class NetworkManager {
     }
 
     return null;
+  }
+
+  /**
+   * Check if a node is known to be unreachable (via probes) or
+   * temporarily excluded from election.
+   * Returns false for self (always reachable) and for unknown nodes
+   * (no probe data — they might be reachable).
+   * @param nodeId - The node to check
+   */
+  private _isKnownUnreachableOrExcluded(nodeId: NodeId): boolean {
+    // Self is always reachable
+    if (this._identity && nodeId === this._identity.nodeId) return false;
+
+    // Check exclusion list
+    if (this.isExcludedFromElection(nodeId)) return true;
+
+    // Check probe results — only reject if probed AND unreachable
+    const probe = this._probeScheduler.getProbe(nodeId);
+    return probe !== undefined && !probe.reachable;
   }
 
   /**
