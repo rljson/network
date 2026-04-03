@@ -369,10 +369,8 @@ export class NetworkManager {
    * Used by hub self-check: when a hub discovers it cannot accept
    * inbound connections (zero clients after timeout), it excludes
    * itself so the next election picks a different node.
-   *
    * The exclusion expires after {@link durationMs} to allow recovery
    * (e.g. if the firewall is fixed).
-   *
    * @param nodeId - The node to exclude
    * @param durationMs - How long to exclude (milliseconds)
    */
@@ -698,9 +696,9 @@ export class NetworkManager {
   /**
    * Check if a node is known to be unreachable (via probes) or
    * temporarily excluded from election.
-   *
    * Returns false for self (always reachable) and for unknown nodes
    * (no probe data — they might be reachable).
+   * @param nodeId - The node to check
    */
   private _isKnownUnreachableOrExcluded(nodeId: NodeId): boolean {
     // Self is always reachable
