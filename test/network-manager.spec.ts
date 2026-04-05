@@ -941,6 +941,50 @@ describe('NetworkManager', () => {
       await manager.start();
       expect(manager.isExcludedFromElection(selfId)).toBe(false);
     });
+
+    it('clearOverride also clears exclusions', async () => {
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '10.0.0.1:3000' },
+        }),
+      );
+      await manager.start();
+
+      const selfId = manager.getIdentity().nodeId;
+
+      // Override hub, then exclude self (simulates hub self-check failure)
+      manager.assignHub('custom-hub');
+      manager.excludeFromElection(selfId, 60000);
+      expect(manager.isExcludedFromElection(selfId)).toBe(true);
+
+      // Clear override — exclusion should also be cleared
+      manager.clearOverride();
+      expect(manager.isExcludedFromElection(selfId)).toBe(false);
+    });
+
+    it('clearExclusions clears all excluded nodes', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+
+      const selfId = manager.getIdentity().nodeId;
+      manager.excludeFromElection(selfId, 60000);
+      manager.excludeFromElection('other-node', 60000);
+      expect(manager.isExcludedFromElection(selfId)).toBe(true);
+      expect(manager.isExcludedFromElection('other-node')).toBe(true);
+
+      manager.clearExclusions();
+      expect(manager.isExcludedFromElection(selfId)).toBe(false);
+      expect(manager.isExcludedFromElection('other-node')).toBe(false);
+    });
+
+    it('clearExclusions is a no-op when nothing excluded', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+
+      // Should not throw or emit events
+      manager.clearExclusions();
+      expect(manager.isExcludedFromElection('any-node')).toBe(false);
+    });
   });
 
   // .........................................................................

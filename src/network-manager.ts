@@ -358,9 +358,32 @@ export class NetworkManager {
 
   /**
    * Clear the manual hub override, returning to cascade logic.
+   *
+   * Also clears all election exclusions so that the natural election
+   * can consider every reachable node — including one that was
+   * temporarily excluded during the override cycle (e.g. a hub that
+   * failed its self-check).
    */
   clearOverride(): void {
     this._manualLayer.clearOverride();
+    this.clearExclusions();
+  }
+
+  /**
+   * Clear all election exclusions immediately.
+   *
+   * Use this when the conditions that caused the exclusion no longer
+   * apply (e.g. after clearing a manual override).
+   */
+  clearExclusions(): void {
+    if (this._excludedNodes.size > 0) {
+      this._log(
+        'election',
+        `Cleared ${this._excludedNodes.size} election exclusion(s)`,
+      );
+      this._excludedNodes.clear();
+      this._recomputeTopology();
+    }
   }
 
   /**
