@@ -117,7 +117,7 @@ describe('HubElection', () => {
   // .........................................................................
 
   describe('incumbent advantage', () => {
-    it('keeps incumbent hub if still reachable', () => {
+    it('non-self incumbent yields to earlier-started reachable peer', () => {
       const incumbent = makeNode('old-hub', 5000); // started LATER
       const challenger = makeNode('new-node', 1000); // started EARLIER
       const probes = [
@@ -125,7 +125,28 @@ describe('HubElection', () => {
         reachableProbe(selfId, 'new-node'),
       ];
 
-      // old-hub should stay despite new-node being older
+      // new-node started earlier → incumbent yields
+      const result = electHub(
+        [incumbent, challenger],
+        probes,
+        'old-hub',
+        selfId,
+      );
+      expect(result).toEqual<ElectionResult>({
+        hubId: 'new-node',
+        reason: 'earliest-start',
+      });
+    });
+
+    it('keeps non-self incumbent when no earlier reachable peer exists', () => {
+      const incumbent = makeNode('old-hub', 1000); // started FIRST
+      const challenger = makeNode('new-node', 5000); // started LATER
+      const probes = [
+        reachableProbe(selfId, 'old-hub'),
+        reachableProbe(selfId, 'new-node'),
+      ];
+
+      // old-hub is incumbent AND has earliest startedAt → stays
       const result = electHub(
         [incumbent, challenger],
         probes,
@@ -331,7 +352,7 @@ describe('HubElection', () => {
   // .........................................................................
 
   describe('mixed scenarios', () => {
-    it('incumbent advantage wins over earlier startedAt', () => {
+    it('earlier startedAt wins over later-started incumbent', () => {
       const incumbent = makeNode('hub', 5000); // started late
       const older = makeNode('older', 1000); // started early
       const probes = [
@@ -339,9 +360,10 @@ describe('HubElection', () => {
         reachableProbe(selfId, 'older'),
       ];
 
+      // 'older' started earlier → incumbent must yield
       const result = electHub([incumbent, older], probes, 'hub', selfId);
-      expect(result.hubId).toBe('hub');
-      expect(result.reason).toBe('incumbent');
+      expect(result.hubId).toBe('older');
+      expect(result.reason).toBe('earliest-start');
     });
 
     it('re-election after incumbent fails promotes earliest', () => {
