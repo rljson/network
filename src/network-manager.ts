@@ -111,6 +111,12 @@ export class NetworkManager {
   private _formedBy: FormedBy = 'static';
 
   /**
+   * When true, the next election ignores incumbent advantage. Set by
+   * clearOverride so the override target doesn't keep incumbency.
+   */
+  private _suppressIncumbent = false;
+
+  /**
    * Create a NetworkManager.
    * @param _config - Network configuration
    * @param options - Optional overrides (e.g. custom probe function)
@@ -363,8 +369,12 @@ export class NetworkManager {
    * can consider every reachable node — including one that was
    * temporarily excluded during the override cycle (e.g. a hub that
    * failed its self-check).
+   *
+   * The next election runs without incumbent advantage so the
+   * override target does not keep incumbency.
    */
   clearOverride(): void {
+    this._suppressIncumbent = true;
     this._manualLayer.clearOverride();
     this.clearExclusions();
   }
@@ -505,7 +515,13 @@ export class NetworkManager {
       // handled separately by the deferral logic below (Fix 3), which
       // ensures only the earliest-startedAt node self-promotes before
       // any incumbent exists.
-      const effectiveIncumbent = this._currentHubId;
+      //
+      // After clearOverride, _suppressIncumbent is true so we pass
+      // null — the override target should not keep incumbency.
+      const effectiveIncumbent = this._suppressIncumbent
+        ? null
+        : this._currentHubId;
+      this._suppressIncumbent = false;
 
       const result = electHub(
         candidates,
