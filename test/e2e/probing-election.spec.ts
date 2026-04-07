@@ -184,6 +184,41 @@ describe('E2E: Probing + Election path', () => {
     expect(topology2.formedBy).toBe('election'); // election with probes
   });
 
+  it('clearOverride suppresses incumbent advantage of override target', async () => {
+    // When a manual override assigns a hub and then is cleared, the
+    // next election must NOT give incumbent advantage to the override
+    // target.  This prevents the override target from "sticking" as hub
+    // after the override is removed.
+    const tcp = await startTcpServer();
+    servers.push(tcp);
+
+    const config = {
+      ...defaultNetworkConfig('e2e-suppress', 3000),
+      static: { hubAddress: `127.0.0.1:${tcp.port}` },
+      probing: { enabled: true, intervalMs: 60000, timeoutMs: 1000 },
+    };
+    manager = new NetworkManager(config);
+    await manager.start();
+
+    // Run probes to establish election data
+    await manager.getProbeScheduler().runOnce();
+    const naturalHub = manager.getTopology().hubNodeId;
+    expect(naturalHub).toBeTruthy();
+
+    // Override to a custom hub
+    manager.assignHub('override-target');
+    expect(manager.getTopology().hubNodeId).toBe('override-target');
+    expect(manager.getTopology().formedBy).toBe('manual');
+
+    // Clear override: election should run without incumbent advantage
+    // for 'override-target'. Since 'override-target' is not a real
+    // probed peer, the election should return the natural winner.
+    manager.clearOverride();
+    const postOverrideHub = manager.getTopology().hubNodeId;
+    expect(postOverrideHub).toBe(naturalHub);
+    expect(postOverrideHub).not.toBe('override-target');
+  });
+
   it('election with mock probes: incumbent advantage', async () => {
     // Use mock probes to test election logic through NetworkManager
     let probeReachable = true;
