@@ -1,6 +1,6 @@
 {
   "name": "@rljson/network",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "Networking middle layer providing basic advertising and discovery as well as cloud fall backs and basic config.",
   "homepage": "https://github.com/rljson/network",
   "bugs": "https://github.com/rljson/network/issues",
