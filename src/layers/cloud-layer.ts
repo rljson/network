@@ -35,12 +35,14 @@ export interface CloudHttpClient {
    * @param endpoint - Cloud service base URL
    * @param info - This node's info
    * @param apiKey - Optional API key
+   * @param tenantId - Optional tenant identifier (required by hosted CloudCoordinator)
    * @returns The peer list response from the cloud
    */
   register(
     endpoint: string,
     info: NodeInfo,
     apiKey?: string,
+    tenantId?: string,
   ): Promise<CloudPeerListResponse>;
 
   /**
@@ -49,6 +51,7 @@ export interface CloudHttpClient {
    * @param nodeId - This node's ID
    * @param domain - This node's domain
    * @param apiKey - Optional API key
+   * @param tenantId - Optional tenant identifier (required by hosted CloudCoordinator)
    * @returns The peer list response from the cloud
    */
   poll(
@@ -56,6 +59,7 @@ export interface CloudHttpClient {
     nodeId: NodeId,
     domain: string,
     apiKey?: string,
+    tenantId?: string,
   ): Promise<CloudPeerListResponse>;
 
   /**
@@ -64,12 +68,14 @@ export interface CloudHttpClient {
    * @param nodeId - This node's ID
    * @param probes - Probe results to report
    * @param apiKey - Optional API key
+   * @param tenantId - Optional tenant identifier (required by hosted CloudCoordinator)
    */
   reportProbes(
     endpoint: string,
     nodeId: NodeId,
     probes: PeerProbe[],
     apiKey?: string,
+    tenantId?: string,
   ): Promise<void>;
 }
 
@@ -88,16 +94,20 @@ export function defaultCreateCloudHttpClient(): CloudHttpClient {
       endpoint: string,
       info: NodeInfo,
       apiKey?: string,
+      tenantId?: string,
     ): Promise<CloudPeerListResponse> {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+      if (apiKey) headers['x-api-key'] = apiKey;
+
+      const body: Record<string, unknown> = { ...info };
+      if (tenantId) body['tenantId'] = tenantId;
 
       const res = await fetch(`${endpoint}/register`, {
         method: 'POST',
         headers,
-        body: JSON.stringify(info),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -112,11 +122,14 @@ export function defaultCreateCloudHttpClient(): CloudHttpClient {
       nodeId: NodeId,
       domain: string,
       apiKey?: string,
+      tenantId?: string,
     ): Promise<CloudPeerListResponse> {
       const headers: Record<string, string> = {};
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+      if (apiKey) headers['x-api-key'] = apiKey;
 
       const params = new URLSearchParams({ nodeId, domain });
+      if (tenantId) params.set('tenantId', tenantId);
+
       const res = await fetch(`${endpoint}/peers?${params.toString()}`, {
         method: 'GET',
         headers,
@@ -134,16 +147,20 @@ export function defaultCreateCloudHttpClient(): CloudHttpClient {
       nodeId: NodeId,
       probes: PeerProbe[],
       apiKey?: string,
+      tenantId?: string,
     ): Promise<void> {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
-      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+      if (apiKey) headers['x-api-key'] = apiKey;
+
+      const body: Record<string, unknown> = { nodeId, probes };
+      if (tenantId) body['tenantId'] = tenantId;
 
       const res = await fetch(`${endpoint}/probes`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ nodeId, probes }),
+        body: JSON.stringify(body),
       });
 
       if (!res.ok) {
@@ -243,6 +260,7 @@ export class CloudLayer implements DiscoveryLayer {
         this._config.endpoint,
         identity.toNodeInfo(),
         this._config.apiKey,
+        this._config.tenantId,
       );
     } catch {
       // Cloud unreachable — fall through to static
@@ -347,6 +365,7 @@ export class CloudLayer implements DiscoveryLayer {
         this._identity.nodeId,
         probes,
         this._config.apiKey,
+        this._config.tenantId,
       );
     } catch {
       // Report failed — cloud may be temporarily unreachable, ignore
@@ -431,6 +450,7 @@ export class CloudLayer implements DiscoveryLayer {
           this._config.endpoint,
           this._identity.toNodeInfo(),
           this._config.apiKey,
+          this._config.tenantId,
         );
       } catch {
         this._consecutivePollFailures++;
@@ -455,6 +475,7 @@ export class CloudLayer implements DiscoveryLayer {
         this._identity.nodeId,
         this._identity.domain,
         this._config.apiKey,
+        this._config.tenantId,
       );
     } catch {
       this._consecutivePollFailures++;
