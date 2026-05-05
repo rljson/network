@@ -31,7 +31,7 @@ import type { PeerProbe } from '../../src/types/peer-probe.ts';
  * This validates:
  * - Real HTTP request/response cycle
  * - JSON serialization/deserialization
- * - Header handling (Content-Type, Authorization)
+ * - Header handling (Content-Type, x-api-key)
  * - URL construction (query params for poll)
  * - Error status handling
  * - Full CloudLayer lifecycle against a real endpoint
@@ -94,7 +94,7 @@ class LocalCloudServer {
   /** The API key the server expects (null = no auth) */
   expectedApiKey: string | null = null;
 
-  /** Last Authorization header received */
+  /** Last x-api-key header received */
   lastAuthHeader: string | null = null;
 
   /** Endpoint URL */
@@ -139,12 +139,12 @@ class LocalCloudServer {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    this.lastAuthHeader = (req.headers['authorization'] as string) ?? null;
+    this.lastAuthHeader = (req.headers['x-api-key'] as string) ?? null;
 
     // Check API key if configured
     if (this.expectedApiKey) {
-      const auth = req.headers['authorization'];
-      if (auth !== `Bearer ${this.expectedApiKey}`) {
+      const auth = req.headers['x-api-key'];
+      if (auth !== this.expectedApiKey) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unauthorized' }));
         return;
@@ -337,7 +337,7 @@ describe('CloudLayer localhost — real HTTP', () => {
       expect(server.reportedProbes[0]!.probes[0]!.reachable).toBe(true);
     });
 
-    it('sends Authorization header when apiKey provided', async () => {
+    it('sends x-api-key header when apiKey provided', async () => {
       server = new LocalCloudServer();
       server.expectedApiKey = 'secret-key';
       await server.start();
@@ -346,7 +346,7 @@ describe('CloudLayer localhost — real HTTP', () => {
       const info = testIdentity().toNodeInfo();
 
       await client.register(server.endpoint, info, 'secret-key');
-      expect(server.lastAuthHeader).toBe('Bearer secret-key');
+      expect(server.lastAuthHeader).toBe('secret-key');
     });
 
     it('register throws on server error', async () => {

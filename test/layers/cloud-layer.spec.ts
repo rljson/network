@@ -51,19 +51,21 @@ function fakePeer(id: string, domain = 'test-domain'): NodeInfo {
  * Tracks register/poll/report calls and returns configurable responses.
  */
 class MockCloudService implements CloudHttpClient {
-  registerCalls: Array<{ endpoint: string; info: NodeInfo; apiKey?: string }> =
+  registerCalls: Array<{ endpoint: string; info: NodeInfo; apiKey?: string; tenantId?: string }> =
     [];
   pollCalls: Array<{
     endpoint: string;
     nodeId: string;
     domain: string;
     apiKey?: string;
+    tenantId?: string;
   }> = [];
   reportCalls: Array<{
     endpoint: string;
     nodeId: string;
     probes: PeerProbe[];
     apiKey?: string;
+    tenantId?: string;
   }> = [];
 
   /** Response to return from register/poll */
@@ -82,8 +84,9 @@ class MockCloudService implements CloudHttpClient {
     endpoint: string,
     info: NodeInfo,
     apiKey?: string,
+    tenantId?: string,
   ): Promise<CloudPeerListResponse> {
-    this.registerCalls.push({ endpoint, info, apiKey });
+    this.registerCalls.push({ endpoint, info, apiKey, tenantId });
     if (this.registerError) throw this.registerError;
     return this.nextResponse;
   }
@@ -93,8 +96,9 @@ class MockCloudService implements CloudHttpClient {
     nodeId: string,
     domain: string,
     apiKey?: string,
+    tenantId?: string,
   ): Promise<CloudPeerListResponse> {
-    this.pollCalls.push({ endpoint, nodeId, domain, apiKey });
+    this.pollCalls.push({ endpoint, nodeId, domain, apiKey, tenantId });
     if (this.pollError) throw this.pollError;
     return this.nextResponse;
   }
@@ -104,8 +108,9 @@ class MockCloudService implements CloudHttpClient {
     nodeId: string,
     probes: PeerProbe[],
     apiKey?: string,
+    tenantId?: string,
   ): Promise<void> {
-    this.reportCalls.push({ endpoint, nodeId, probes, apiKey });
+    this.reportCalls.push({ endpoint, nodeId, probes, apiKey, tenantId });
     if (this.reportError) throw this.reportError;
   }
 }
@@ -662,8 +667,10 @@ describe('CloudLayer', () => {
       expect(url).toBe('https://cloud.test/register');
       expect(opts.method).toBe('POST');
       expect(opts.headers['Content-Type']).toBe('application/json');
-      expect(opts.headers['Authorization']).toBe('Bearer my-key');
-      expect(JSON.parse(opts.body as string)).toEqual(info);
+      expect(opts.headers['x-api-key']).toBe('my-key');
+      const body = JSON.parse(opts.body as string);
+      expect(body).toMatchObject(info);
+      expect(body.tenantId).toBeUndefined();
 
       vi.unstubAllGlobals();
     });
@@ -693,7 +700,24 @@ describe('CloudLayer', () => {
       await client.register('https://cloud.test', testIdentity().toNodeInfo());
 
       const headers = mockFetch.mock.calls[0]![1].headers;
-      expect(headers['Authorization']).toBeUndefined();
+      expect(headers['x-api-key']).toBeUndefined();
+
+      vi.unstubAllGlobals();
+    });
+
+    it('register includes tenantId in body when provided', async () => {
+      const client = defaultCreateCloudHttpClient();
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ peers: [], assignedHub: null }),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      const info = testIdentity().toNodeInfo();
+      await client.register('https://cloud.test', info, 'key', 'tenant-42');
+
+      const body = JSON.parse(mockFetch.mock.calls[0]![1].body as string);
+      expect(body.tenantId).toBe('tenant-42');
 
       vi.unstubAllGlobals();
     });
@@ -714,7 +738,23 @@ describe('CloudLayer', () => {
       expect(url).toContain('nodeId=node-1');
       expect(url).toContain('domain=my-domain');
       expect(opts.method).toBe('GET');
-      expect(opts.headers['Authorization']).toBe('Bearer key-1');
+      expect(opts.headers['x-api-key']).toBe('key-1');
+
+      vi.unstubAllGlobals();
+    });
+
+    it('poll includes tenantId in query params when provided', async () => {
+      const client = defaultCreateCloudHttpClient();
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ peers: [], assignedHub: null }),
+      });
+      vi.stubGlobal('fetch', mockFetch);
+
+      await client.poll('https://cloud.test', 'node-1', 'dom', 'key', 'tenant-42');
+
+      const [url] = mockFetch.mock.calls[0]!;
+      expect(url).toContain('tenantId=tenant-42');
 
       vi.unstubAllGlobals();
     });
@@ -744,7 +784,7 @@ describe('CloudLayer', () => {
       await client.poll('https://cloud.test', 'node-1', 'dom');
 
       const headers = mockFetch.mock.calls[0]![1].headers;
-      expect(headers['Authorization']).toBeUndefined();
+      expect(headers['x-api-key']).toBeUndefined();
 
       vi.unstubAllGlobals();
     });
@@ -776,10 +816,24 @@ describe('CloudLayer', () => {
       const [url, opts] = mockFetch.mock.calls[0]!;
       expect(url).toBe('https://cloud.test/probes');
       expect(opts.method).toBe('POST');
-      expect(opts.headers['Authorization']).toBe('Bearer key-1');
+      expect(opts.headers['x-api-key']).toBe('key-1');
       const body = JSON.parse(opts.body as string);
       expect(body.nodeId).toBe('node-1');
       expect(body.probes).toEqual(probes);
+      expect(body.tenantId).toBeUndefined();
+
+      vi.unstubAllGlobals();
+    });
+
+    it('reportProbes includes tenantId in body when provided', async () => {
+      const client = defaultCreateCloudHttpClient();
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true });
+      vi.stubGlobal('fetch', mockFetch);
+
+      await client.reportProbes('https://cloud.test', 'node-1', [], 'key', 'tenant-42');
+
+      const body = JSON.parse(mockFetch.mock.calls[0]![1].body as string);
+      expect(body.tenantId).toBe('tenant-42');
 
       vi.unstubAllGlobals();
     });
@@ -806,9 +860,86 @@ describe('CloudLayer', () => {
       await client.reportProbes('https://cloud.test', 'node-1', []);
 
       const headers = mockFetch.mock.calls[0]![1].headers;
-      expect(headers['Authorization']).toBeUndefined();
+      expect(headers['x-api-key']).toBeUndefined();
 
       vi.unstubAllGlobals();
+    });
+  });
+
+  // .........................................................................  
+  // tenantId forwarding
+  // .........................................................................
+
+  describe('tenantId forwarding', () => {
+    it('passes tenantId from CloudConfig to register', async () => {
+      const tenantLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          apiKey: 'test-key',
+          tenantId: 'tenant-abc',
+          pollIntervalMs: 60000,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await tenantLayer.start(testIdentity());
+
+      expect(cloud.registerCalls[0]!.tenantId).toBe('tenant-abc');
+
+      await tenantLayer.stop();
+    });
+
+    it('passes tenantId from CloudConfig to poll', async () => {
+      vi.useFakeTimers();
+
+      const tenantLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          apiKey: 'test-key',
+          tenantId: 'tenant-abc',
+          pollIntervalMs: 100,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await tenantLayer.start(testIdentity());
+      await vi.advanceTimersByTimeAsync(101);
+
+      expect(cloud.pollCalls.length).toBeGreaterThan(0);
+      expect(cloud.pollCalls[0]!.tenantId).toBe('tenant-abc');
+
+      await tenantLayer.stop();
+      vi.useRealTimers();
+    });
+
+    it('passes tenantId from CloudConfig to reportProbes', async () => {
+      const tenantLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          apiKey: 'test-key',
+          tenantId: 'tenant-abc',
+          pollIntervalMs: 60000,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      await tenantLayer.start(testIdentity());
+      await tenantLayer.reportProbes([]);
+
+      expect(cloud.reportCalls[0]!.tenantId).toBe('tenant-abc');
+
+      await tenantLayer.stop();
+    });
+
+    it('omits tenantId when not set in CloudConfig', async () => {
+      await layer.start(testIdentity()); // layer has no tenantId
+      await layer.reportProbes([]);
+
+      expect(cloud.registerCalls[0]!.tenantId).toBeUndefined();
+      expect(cloud.reportCalls[0]!.tenantId).toBeUndefined();
     });
   });
 

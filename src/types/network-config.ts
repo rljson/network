@@ -26,6 +26,12 @@ export interface CloudConfig {
   endpoint: string;
   /** Authentication key */
   apiKey?: string;
+  /**
+   * Tenant identifier for the hosted CloudCoordinator.
+   * Not required when using the embedded CloudService in
+   * ds_serverless_client_server (which ignores it).
+   */
+  tenantId?: string;
   /** How often to poll in ms (default: 30000) */
   pollIntervalMs?: number;
   /** Maximum backoff interval when cloud is unreachable in ms (default: 300000 = 5 min) */
