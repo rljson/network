@@ -38,6 +38,7 @@ function testConfig(overrides?: Partial<NetworkConfig>): NetworkConfig {
 /** Minimal mock cloud service for NetworkManager integration tests */
 class MockCloudService implements CloudHttpClient {
   nextResponse: CloudPeerListResponse = { peers: [], assignedHub: null };
+  reportedProbes: PeerProbe[][] = [];
 
   register(): Promise<CloudPeerListResponse> {
     return Promise.resolve(this.nextResponse);
@@ -47,7 +48,12 @@ class MockCloudService implements CloudHttpClient {
     return Promise.resolve(this.nextResponse);
   }
 
-  reportProbes(): Promise<void> {
+  reportProbes(
+    _endpoint: string,
+    _nodeId: string,
+    probes: PeerProbe[],
+  ): Promise<void> {
+    this.reportedProbes.push(probes);
     return Promise.resolve();
   }
 }
@@ -770,6 +776,49 @@ describe('NetworkManager', () => {
 
       // Cloud active but no hub → fallback to static
       expect(manager.getTopology().formedBy).toBe('static');
+    });
+
+    it('uploads probe results to cloud after each cycle', async () => {
+      const mock = new MockCloudService();
+      mock.nextResponse = { peers: [], assignedHub: null };
+
+      const mockProbe: ProbeFn = async (
+        _h,
+        _p,
+        fromNodeId,
+        toNodeId,
+      ): Promise<PeerProbe> => ({
+        fromNodeId,
+        toNodeId,
+        reachable: true,
+        latencyMs: 1.0,
+        measuredAt: Date.now(),
+      });
+
+      manager = new NetworkManager(
+        testConfig({
+          static: { hubAddress: '192.168.1.100:3000' },
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        { cloudDeps: createMockCloudDeps(mock), probeFn: mockProbe },
+      );
+      await manager.start();
+
+      // Manually trigger a probe cycle
+      await manager.getProbeScheduler().runOnce();
+
+      // Wait a tick for the void cloud-upload to settle
+      await Promise.resolve();
+
+      expect(mock.reportedProbes.length).toBeGreaterThan(0);
+      const lastBatch = mock.reportedProbes[mock.reportedProbes.length - 1]!;
+      expect(lastBatch.length).toBeGreaterThan(0);
+      expect(lastBatch[0]!.toNodeId).toBe('static-hub-192.168.1.100:3000');
     });
   });
 
