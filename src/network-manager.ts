@@ -233,6 +233,10 @@ export class NetworkManager {
           'probe',
           `Cycle: ${reachable}/${probes.length} reachable [${details}]`,
         );
+        // Upload probes to the cloud coordinator (if configured) so it can
+        // build a connectivity graph and elect hubs across the fleet.
+        // No-op when CloudLayer is inactive.
+        void this._cloudLayer.reportProbes(probes);
       }
       this._recomputeTopology();
     });
