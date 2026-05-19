@@ -34,6 +34,7 @@ src/
 │   └── hub-election.ts         // Deterministic hub election algorithm
 ├── probing/
 │   ├── peer-prober.ts          // Real TCP connect probe via node:net
+│   ├── probe-listener.ts       // Tiny TCP server that answers incoming probes
 │   └── probe-scheduler.ts      // Periodic probing + change detection
 ├── layers/
 │   ├── discovery-layer.ts      // DiscoveryLayer interface — contract for all layers
@@ -106,6 +107,24 @@ probing of all known peers:
   changes
 - `runOnce()` — manual single cycle for deterministic test control
 - Events: `'probes-updated'`, `'peer-unreachable'`, `'peer-reachable'`
+
+### ProbeListener
+
+`ProbeListener` in `src/probing/probe-listener.ts` is the inbound side of
+probing: a lightweight TCP server that accepts and immediately closes
+every connection so that remote `PeerProber` calls can complete the TCP
+handshake (the latency measurement) and tear down cleanly.
+
+- Bound by `NetworkManager` **before** `NodeIdentity.create()` so the
+  actual bound port can be propagated into `NodeInfo.port` (callers may
+  pass `port: 0` to request an OS-assigned ephemeral port).
+- No application-level protocol — pure handshake-and-close.
+- Listens on `0.0.0.0` (all interfaces) so peers on any local network
+  can reach it.
+- Injectable `createServer` dep for unit tests; default uses
+  `node:net.createServer`.
+- `start(port)` resolves to the actual bound port; `stop()` is a no-op
+  when not started.
 
 ## Testing Strategy (3-Tier)
 
