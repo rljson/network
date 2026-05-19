@@ -28,7 +28,7 @@ import type {
 /** Default config for testing */
 function testConfig(overrides?: Partial<NetworkConfig>): NetworkConfig {
   return {
-    ...defaultNetworkConfig('test-domain', 3000),
+    ...defaultNetworkConfig('test-domain', 0),
     ...overrides,
   };
 }

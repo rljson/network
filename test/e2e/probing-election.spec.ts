@@ -86,7 +86,7 @@ describe('E2E: Probing + Election path', () => {
     servers.push(tcp);
 
     const config = {
-      ...defaultNetworkConfig('e2e-probing', 3000),
+      ...defaultNetworkConfig('e2e-probing', 0),
       static: { hubAddress: `127.0.0.1:${tcp.port}` },
       probing: { enabled: true, intervalMs: 60000, timeoutMs: 1000 },
     };
@@ -143,7 +143,7 @@ describe('E2E: Probing + Election path', () => {
     servers.push(tcp);
 
     const config = {
-      ...defaultNetworkConfig('e2e-noprobe', 3000),
+      ...defaultNetworkConfig('e2e-noprobe', 0),
       static: { hubAddress: `127.0.0.1:${tcp.port}` },
       probing: { enabled: false },
     };
@@ -161,7 +161,7 @@ describe('E2E: Probing + Election path', () => {
     servers.push(tcp);
 
     const config = {
-      ...defaultNetworkConfig('e2e-manual', 3000),
+      ...defaultNetworkConfig('e2e-manual', 0),
       static: { hubAddress: `127.0.0.1:${tcp.port}` },
       probing: { enabled: true, intervalMs: 60000, timeoutMs: 1000 },
     };
@@ -193,7 +193,7 @@ describe('E2E: Probing + Election path', () => {
     servers.push(tcp);
 
     const config = {
-      ...defaultNetworkConfig('e2e-suppress', 3000),
+      ...defaultNetworkConfig('e2e-suppress', 0),
       static: { hubAddress: `127.0.0.1:${tcp.port}` },
       probing: { enabled: true, intervalMs: 60000, timeoutMs: 1000 },
     };
@@ -236,7 +236,7 @@ describe('E2E: Probing + Election path', () => {
     });
 
     const config = {
-      ...defaultNetworkConfig('e2e-election', 3000),
+      ...defaultNetworkConfig('e2e-election', 0),
       static: { hubAddress: '10.0.0.1:3000' },
       probing: { enabled: true, intervalMs: 60000 },
     };
@@ -280,7 +280,7 @@ describe('E2E: Probing + Election path', () => {
     });
 
     const config = {
-      ...defaultNetworkConfig('e2e-split-brain', 3000),
+      ...defaultNetworkConfig('e2e-split-brain', 0),
       static: { hubAddress: '10.0.0.1:3000' },
       probing: { enabled: true, intervalMs: 60000 },
     };
@@ -328,7 +328,7 @@ describe('E2E: Probing + Election path', () => {
     // Node A: earlier startedAt → should self-elect
     const configA: NetworkConfig = {
       domain: 'e2e-defer',
-      port: 3000,
+      port: 0,
       identityDir: uniqueIdentityDir(),
       broadcast: {
         enabled: true,
@@ -342,7 +342,7 @@ describe('E2E: Probing + Election path', () => {
     // Node B: later startedAt → should DEFER
     const configB: NetworkConfig = {
       domain: 'e2e-defer',
-      port: 3001,
+      port: 0,
       identityDir: uniqueIdentityDir(),
       broadcast: {
         enabled: true,
@@ -424,7 +424,7 @@ describe('E2E: Probing + Election path', () => {
 
     const configA: NetworkConfig = {
       domain: 'e2e-crash',
-      port: 3000,
+      port: 0,
       identityDir: uniqueIdentityDir(),
       broadcast: {
         enabled: true,
@@ -437,7 +437,7 @@ describe('E2E: Probing + Election path', () => {
 
     const configB: NetworkConfig = {
       domain: 'e2e-crash',
-      port: 3001,
+      port: 0,
       identityDir: uniqueIdentityDir(),
       broadcast: {
         enabled: true,
@@ -556,7 +556,7 @@ describe('E2E: Probing + Election path', () => {
           hostname: 'server-A',
           localIps: ['192.168.1.94'],
           domain: 'e2e-cloud-defer',
-          port: 3000,
+          port: 0,
           startedAt: Date.now() - 60_000, // started 60s ago
         },
       ],
@@ -564,7 +564,7 @@ describe('E2E: Probing + Election path', () => {
     };
 
     const config: NetworkConfig = {
-      ...defaultNetworkConfig('e2e-cloud-defer', 3000),
+      ...defaultNetworkConfig('e2e-cloud-defer', 0),
       cloud: {
         enabled: true,
         endpoint: 'http://cloud.test',

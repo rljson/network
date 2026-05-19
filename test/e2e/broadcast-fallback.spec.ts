@@ -69,7 +69,7 @@ describe('E2E: Broadcast → Static Fallback', () => {
 
     const config: NetworkConfig = {
       domain: 'fallback-test',
-      port: 3000,
+      port: 0,
       identityDir: uniqueIdentityDir(),
       broadcast: {
         enabled: true,
@@ -107,7 +107,7 @@ describe('E2E: Broadcast → Static Fallback', () => {
 
     const config: NetworkConfig = {
       domain: 'disabled-test',
-      port: 3000,
+      port: 0,
       identityDir: uniqueIdentityDir(),
       broadcast: {
         enabled: false,
@@ -142,7 +142,7 @@ describe('E2E: Broadcast → Static Fallback', () => {
 
     const config: NetworkConfig = {
       domain: 'prefer-broadcast',
-      port: 3000,
+      port: 0,
       identityDir: uniqueIdentityDir(),
       broadcast: {
         enabled: true,
@@ -167,7 +167,7 @@ describe('E2E: Broadcast → Static Fallback', () => {
 
     const configB: NetworkConfig = {
       ...config,
-      port: 3001,
+      port: 0,
       identityDir: uniqueIdentityDir(),
     };
     const managerB = new NetworkManager(configB, {
