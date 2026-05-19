@@ -82,7 +82,7 @@ describe('E2E: Broadcast Path', () => {
     const reachable = new Set<string>();
 
     // Node A — started earlier → should become hub
-    const configA = broadcastConfig(3000);
+    const configA = broadcastConfig(0);
     const managerA = new NetworkManager(configA, {
       probeFn: mockProbeFn(reachable),
       failThreshold: 1,
@@ -94,7 +94,7 @@ describe('E2E: Broadcast Path', () => {
     managers.push(managerA);
 
     // Node B — started later
-    const configB = broadcastConfig(3001);
+    const configB = broadcastConfig(0);
     const managerB = new NetworkManager(configB, {
       probeFn: mockProbeFn(reachable),
       failThreshold: 1,
@@ -143,7 +143,7 @@ describe('E2E: Broadcast Path', () => {
     const hub = new MockUdpHub();
     const reachable = new Set<string>();
 
-    const configA = broadcastConfig(3000);
+    const configA = broadcastConfig(0);
     const managerA = new NetworkManager(configA, {
       probeFn: mockProbeFn(reachable),
       failThreshold: 1,
@@ -154,7 +154,7 @@ describe('E2E: Broadcast Path', () => {
     });
     managers.push(managerA);
 
-    const configB = broadcastConfig(3001);
+    const configB = broadcastConfig(0);
     const managerB = new NetworkManager(configB, {
       probeFn: mockProbeFn(reachable),
       failThreshold: 1,
@@ -203,7 +203,7 @@ describe('E2E: Broadcast Path', () => {
     const hub = new MockUdpHub();
     const reachable = new Set<string>();
 
-    const configA = broadcastConfig(3000, 'domain-alpha');
+    const configA = broadcastConfig(0, 'domain-alpha');
     const managerA = new NetworkManager(configA, {
       probeFn: mockProbeFn(reachable),
       failThreshold: 1,
@@ -214,7 +214,7 @@ describe('E2E: Broadcast Path', () => {
     });
     managers.push(managerA);
 
-    const configB = broadcastConfig(3001, 'domain-beta');
+    const configB = broadcastConfig(0, 'domain-beta');
     const managerB = new NetworkManager(configB, {
       probeFn: mockProbeFn(reachable),
       failThreshold: 1,

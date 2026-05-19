@@ -429,6 +429,29 @@ Access it via `manager.getProbeScheduler()` for advanced use.
 (default: 3) before being declared unreachable. A single success resets
 the counter immediately. This prevents flapping on transient network glitches.
 
+### ProbeListener
+
+Tiny TCP server that answers incoming probes from other nodes. It binds
+on the configured `port` (use `0` for an ephemeral port) and immediately
+closes any connection it accepts — the TCP handshake itself is the
+latency measurement consumed by remote `PeerProber` calls.
+
+`NetworkManager` creates and runs a `ProbeListener` automatically when
+probing is enabled. It binds **before** the node's identity is created
+so that the actual bound port is propagated into `NodeInfo.port`, which
+is what peers use to probe back. Pass `port: 0` in `NetworkConfig` when
+you want the OS to assign a free port (recommended for tests and for
+nodes that do not need a stable inbound port).
+
+```typescript
+import { ProbeListener } from '@rljson/network';
+
+const listener = new ProbeListener();
+const boundPort = await listener.start(0); // returns the OS-assigned port
+// ... other nodes can now probe `boundPort` ...
+await listener.stop();
+```
+
 ## Example
 
 [src/example.ts](src/example.ts)

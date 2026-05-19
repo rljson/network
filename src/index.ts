@@ -101,6 +101,11 @@ export type {
 // Probing
 export { probePeer } from './probing/peer-prober.ts';
 export type { ProbeOptions } from './probing/peer-prober.ts';
+export {
+  ProbeListener,
+  defaultProbeListenerDeps,
+} from './probing/probe-listener.ts';
+export type { ProbeListenerDeps } from './probing/probe-listener.ts';
 export { ProbeScheduler } from './probing/probe-scheduler.ts';
 export type {
   ProbeFn,

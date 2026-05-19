@@ -40,7 +40,7 @@ describe('E2E: Static path', () => {
     // Setup: node with static hub configured
     // -----------------------------------------------------------------------
     const config = {
-      ...defaultNetworkConfig('e2e-domain', 3000),
+      ...defaultNetworkConfig('e2e-domain', 0),
       static: { hubAddress: '192.168.1.100:3000' },
     };
     manager = new NetworkManager(config);
@@ -117,7 +117,7 @@ describe('E2E: Static path', () => {
   });
 
   it('node without static config stays unassigned', async () => {
-    const config = defaultNetworkConfig('e2e-domain', 3000);
+    const config = defaultNetworkConfig('e2e-domain', 0);
     manager = new NetworkManager(config);
 
     await manager.start();
@@ -129,7 +129,7 @@ describe('E2E: Static path', () => {
   });
 
   it('self-assignment as hub works correctly', async () => {
-    const config = defaultNetworkConfig('e2e-domain', 3000);
+    const config = defaultNetworkConfig('e2e-domain', 0);
     manager = new NetworkManager(config);
 
     await manager.start();
