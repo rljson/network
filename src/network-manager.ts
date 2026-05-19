@@ -16,6 +16,10 @@ import { CloudLayer, type CloudLayerDeps } from './layers/cloud-layer.ts';
 import { ManualLayer } from './layers/manual-layer.ts';
 import { StaticLayer } from './layers/static-layer.ts';
 import { PeerTable } from './peer-table.ts';
+import {
+  ProbeListener,
+  type ProbeListenerDeps,
+} from './probing/probe-listener.ts';
 import { ProbeScheduler, type ProbeFn } from './probing/probe-scheduler.ts';
 import type { NetworkConfig } from './types/network-config.ts';
 import type {
@@ -61,6 +65,8 @@ export interface NetworkManagerOptions {
   broadcastDeps?: BroadcastLayerDeps;
   /** Injectable dependencies for CloudLayer (e.g. mock HTTP client) */
   cloudDeps?: CloudLayerDeps;
+  /** Injectable dependencies for ProbeListener (e.g. mock TCP server) */
+  probeListenerDeps?: ProbeListenerDeps;
 }
 
 // .............................................................................
@@ -95,6 +101,9 @@ export class NetworkManager {
 
   /** Probe scheduler for reachability checking */
   private readonly _probeScheduler: ProbeScheduler;
+
+  /** TCP listener that answers incoming probes from other nodes */
+  private readonly _probeListener: ProbeListener;
 
   /** Event listeners */
   private _listeners = new Map<string, Set<Listener>>();
@@ -138,6 +147,7 @@ export class NetworkManager {
       probeFn: options?.probeFn,
       failThreshold: options?.failThreshold,
     });
+    this._probeListener = new ProbeListener(options?.probeListenerDeps);
   }
 
   // .........................................................................
@@ -153,10 +163,19 @@ export class NetworkManager {
   async start(): Promise<void> {
     if (this._running) return;
 
+    // Bind the probe listener first (if probing is enabled) so that the
+    // node's advertised port reflects the actual bound port — important
+    // when the caller passes port 0 to request an ephemeral port.
+    const probingEnabled = this._config.probing?.enabled !== false;
+    let advertisedPort = this._config.port;
+    if (probingEnabled) {
+      advertisedPort = await this._probeListener.start(this._config.port);
+    }
+
     // Create node identity
     this._identity = await NodeIdentity.create({
       domain: this._config.domain,
-      port: this._config.port,
+      port: advertisedPort,
       identityDir: this._config.identityDir,
     });
 
@@ -262,7 +281,6 @@ export class NetworkManager {
     await this._staticLayer.start(this._identity);
 
     // Start probe scheduler if probing is enabled
-    const probingEnabled = this._config.probing?.enabled !== false;
     if (probingEnabled) {
       this._probeScheduler.setPeers(this._peerTable.getPeers());
       this._probeScheduler.start(this._identity.nodeId);
@@ -283,6 +301,7 @@ export class NetworkManager {
     if (!this._running) return;
 
     this._probeScheduler.stop();
+    await this._probeListener.stop();
     await this._manualLayer.stop();
     await this._broadcastLayer.stop();
     await this._cloudLayer.stop();
@@ -567,9 +586,10 @@ export class NetworkManager {
             (p) =>
               !this._probeScheduler.hasEverBeenReachable(p.nodeId) &&
               (p.startedAt < selfInfo.startedAt ||
-                /* v8 ignore next -- @preserve */
+                /* v8 ignore start -- @preserve */
                 (p.startedAt === selfInfo.startedAt &&
                   p.nodeId < selfInfo.nodeId)),
+            /* v8 ignore stop -- @preserve */
           );
           if (hasUntestedEarlierPeer) {
             this._log(
