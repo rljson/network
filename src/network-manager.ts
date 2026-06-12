@@ -119,6 +119,18 @@ export class NetworkManager {
   private _currentRole: NodeRole = 'unassigned';
   private _formedBy: FormedBy = 'static';
 
+  /** Whether probing (and thus the probe listener) is enabled. Set in start(). */
+  private _probingEnabled = false;
+
+  /**
+   * Port the probe listener binds to. It is released for the application's
+   * hub server while this node is the hub, then reacquired afterwards.
+   */
+  private _probePort = 0;
+
+  /** Guards against overlapping probe-listener start/stop operations. */
+  private _probeListenerBusy = false;
+
   /**
    * When true, the next election ignores incumbent advantage. Set by
    * clearOverride so the override target doesn't keep incumbency.
@@ -171,6 +183,8 @@ export class NetworkManager {
     if (probingEnabled) {
       advertisedPort = await this._probeListener.start(this._config.port);
     }
+    this._probingEnabled = probingEnabled;
+    this._probePort = advertisedPort;
 
     // Create node identity
     this._identity = await NodeIdentity.create({
@@ -691,6 +705,10 @@ export class NetworkManager {
       this._currentRole = 'client';
     }
 
+    // Align the probe listener with the new role: it shares its port with
+    // the application's hub server, so it must yield while this node is hub.
+    this._ensureProbeListenerState();
+
     // Emit hub-changed if hub changed
     if (previousHub !== this._currentHubId) {
       this._log(
@@ -720,6 +738,55 @@ export class NetworkManager {
     this._emit('topology-changed', {
       topology: this.getTopology(),
     });
+  }
+
+  /**
+   * Keep the probe listener's lifecycle aligned with this node's role.
+   *
+   * The probe listener and the application's hub server share the same
+   * configured port. While this node is the hub, its hub server occupies
+   * that port and already answers TCP probes, so the probe listener must
+   * release it — otherwise the hub server hits `EADDRINUSE` and degrades,
+   * and peers probe the empty-reply stub instead of the real hub. While
+   * this node is NOT the hub, nothing else holds the port, so the probe
+   * listener provides the TCP target.
+   *
+   * Called after every topology recompute, so it is idempotent and
+   * self-healing: a transient `EADDRINUSE` while the hub server is still
+   * closing simply resolves on the next recompute.
+   */
+  private _ensureProbeListenerState(): void {
+    if (!this._probingEnabled || this._probeListenerBusy) return;
+    const shouldRun = this._currentRole !== 'hub';
+    if (shouldRun === this._probeListener.isRunning()) return;
+    this._probeListenerBusy = true;
+    const op = shouldRun
+      ? this._acquireProbeListener()
+      : this._releaseProbeListener();
+    void op.finally(() => {
+      this._probeListenerBusy = false;
+    });
+  }
+
+  /** Stop the probe listener so the hub server can bind the shared port. */
+  private async _releaseProbeListener(): Promise<void> {
+    await this._probeListener.stop();
+    this._log('probe', 'Released probe port — hub server now answers probes');
+  }
+
+  /** Restart the probe listener on the shared port once this node is no longer hub. */
+  private async _acquireProbeListener(): Promise<void> {
+    try {
+      await this._probeListener.start(this._probePort);
+      this._log('probe', `Reacquired probe port ${this._probePort}`);
+    } catch (err) {
+      // The previous hub server may still be releasing the port — the next
+      // topology recompute retries via _ensureProbeListenerState.
+      this._log(
+        'probe',
+        `Probe port ${this._probePort} not free yet, will retry: ${String(err)}`,
+      );
+    }
   }
 
   /**
