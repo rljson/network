@@ -5,7 +5,7 @@
 // found in the LICENSE file in the root of this package.
 
 import { describe, expect, it, afterEach, vi } from 'vitest';
-import { createServer, type Server, type AddressInfo } from 'node:net';
+import { createServer, createConnection, type Server, type AddressInfo } from 'node:net';
 
 import { NetworkManager } from '../src/network-manager';
 import { defaultNetworkConfig } from '../src/types/network-config';
@@ -897,6 +897,139 @@ describe('NetworkManager', () => {
       const topology = manager.getTopology();
       const probe = topology.probes[0]!;
       expect(probe.reachable).toBe(false);
+    });
+  });
+
+  // .........................................................................
+  // Probe listener / hub server port handoff
+  // ..........................................................................
+
+  describe('probe listener role handoff', () => {
+    const servers: Array<{ stop: () => Promise<void> }> = [];
+
+    afterEach(async () => {
+      for (const s of servers) {
+        await s.stop();
+      }
+      servers.length = 0;
+    });
+
+    /** Resolve true if a TCP connection to the port succeeds, false otherwise. */
+    const canConnect = (port: number): Promise<boolean> =>
+      new Promise((resolve) => {
+        const sock = createConnection({ port, host: '127.0.0.1' });
+        sock.on('connect', () => {
+          sock.destroy();
+          resolve(true);
+        });
+        sock.on('error', () => {
+          sock.destroy();
+          resolve(false);
+        });
+      });
+
+    /** Poll `fn` until it matches `expected` (or fail the test on timeout). */
+    const waitUntil = async (
+      fn: () => Promise<boolean>,
+      expected: boolean,
+    ): Promise<void> => {
+      for (let i = 0; i < 100; i++) {
+        if ((await fn()) === expected) return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error(`timed out waiting for canConnect === ${expected}`);
+    };
+
+    /** Occupy a port with a foreign TCP server. */
+    const listenOn = (
+      port: number,
+    ): Promise<{ stop: () => Promise<void> }> =>
+      new Promise((resolve, reject) => {
+        const server = createServer();
+        server.once('error', reject);
+        server.listen(port, '0.0.0.0', () => {
+          resolve({
+            stop: () => new Promise<void>((res) => server.close(() => res())),
+          });
+        });
+      });
+
+    const probePort = (): number => manager.getIdentity().toNodeInfo().port;
+
+    it('stops the probe listener while hub and restarts it after', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+      const port = probePort();
+      const selfId = manager.getIdentity().nodeId;
+
+      // Listener is up while unassigned/client
+      expect(await canConnect(port)).toBe(true);
+
+      // Becoming hub releases the shared port
+      manager.assignHub(selfId);
+      expect(manager.getTopology().myRole).toBe('hub');
+      await waitUntil(() => canConnect(port), false);
+
+      // Leaving hub reacquires the shared port
+      manager.assignHub('some-other-hub');
+      expect(manager.getTopology().myRole).toBe('client');
+      await waitUntil(() => canConnect(port), true);
+    });
+
+    it('does nothing when probing is disabled', async () => {
+      manager = new NetworkManager(testConfig({ probing: { enabled: false } }));
+      await manager.start();
+      const port = probePort();
+      const selfId = manager.getIdentity().nodeId;
+
+      // No probe listener was ever started
+      expect(await canConnect(port)).toBe(false);
+
+      // Role changes are a no-op for the (absent) probe listener
+      manager.assignHub(selfId);
+      manager.assignHub('some-other-hub');
+      expect(await canConnect(port)).toBe(false);
+    });
+
+    it('ignores overlapping role changes while a handoff is in flight', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+      const port = probePort();
+      const selfId = manager.getIdentity().nodeId;
+
+      // Two synchronous role changes: the second hits the busy guard
+      manager.assignHub(selfId); // → hub: release in flight, busy = true
+      manager.assignHub('some-other-hub'); // → client: busy guard skips
+
+      // Once the in-flight release settles, a later recompute heals it
+      await new Promise((r) => setTimeout(r, 80));
+      manager.assignHub('yet-another-hub');
+      await waitUntil(() => canConnect(port), true);
+    });
+
+    it('retries reacquiring the port when it is briefly still occupied', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+      const port = probePort();
+      const selfId = manager.getIdentity().nodeId;
+
+      // Become hub → probe listener releases the port
+      manager.assignHub(selfId);
+      await waitUntil(() => canConnect(port), false);
+
+      // A foreign server grabs the port (e.g. old hub server still closing)
+      const blocker = await listenOn(port);
+      servers.push(blocker);
+
+      // Leaving hub: the reacquire attempt hits EADDRINUSE and is swallowed
+      manager.assignHub('some-other-hub');
+      await new Promise((r) => setTimeout(r, 80));
+
+      // Free the port; the next recompute heals the listener
+      await blocker.stop();
+      servers.length = 0;
+      manager.assignHub('yet-another-hub');
+      await waitUntil(() => canConnect(port), true);
     });
   });
 
