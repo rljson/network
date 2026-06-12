@@ -443,6 +443,13 @@ is what peers use to probe back. Pass `port: 0` in `NetworkConfig` when
 you want the OS to assign a free port (recommended for tests and for
 nodes that do not need a stable inbound port).
 
+When the configured `port` is also the port your application's hub server
+listens on, `NetworkManager` automatically hands the port off by role: it
+**stops** the probe listener while this node is the hub (so the hub server
+can bind the port and serve probes itself) and **restarts** it once the
+node is no longer the hub. This prevents the hub server from silently
+failing to bind a port still held by the probe listener.
+
 ```typescript
 import { ProbeListener } from '@rljson/network';
 

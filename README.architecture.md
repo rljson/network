@@ -126,7 +126,28 @@ handshake (the latency measurement) and tear down cleanly.
 - `start(port)` resolves to the actual bound port; `stop()` is a no-op
   when not started.
 
-## Testing Strategy (3-Tier)
+#### Role-aware port handoff
+
+The probe listener and the application's hub server share the same
+configured port. `NetworkManager._ensureProbeListenerState()` (called at
+the end of **every** `_recomputeTopology()`) keeps them mutually
+exclusive by role:
+
+- **While this node is the hub**, its hub server occupies the port and
+  already answers TCP probes, so the probe listener is **stopped**.
+  Without this, the hub server would hit `EADDRINUSE`, silently degrade,
+  and peers would probe the empty-reply stub instead of the real hub.
+- **While this node is NOT the hub**, the probe listener is (re)started on
+  the same port so peers still have a TCP target.
+
+The check is idempotent and self-healing: it only acts on a mismatch
+between the desired state (`role !== 'hub'`) and `probeListener.isRunning()`,
+and a transient `EADDRINUSE` while a former hub server is still releasing
+the port simply resolves on the next recompute. A `_probeListenerBusy`
+guard serialises overlapping start/stop operations during rapid role
+flapping.
+
+
 
 | Tier   | Scope                  | What's real        | Used for                             |
 | ------ | ---------------------- | ------------------ | ------------------------------------ |
