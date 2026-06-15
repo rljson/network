@@ -41,12 +41,28 @@ export class PeerTable {
   /** Self nodeId — excluded from the peer table */
   private _selfId: NodeId | null = null;
 
+  /** Self domain — peers from other domains are never merged */
+  private _selfDomain: string | null = null;
+
   /**
    * Set the self nodeId so it's excluded from the peer table.
    * @param nodeId - This node's own ID
    */
   setSelfId(nodeId: NodeId): void {
     this._selfId = nodeId;
+  }
+
+  /**
+   * Set the self domain so peers from other domains are never merged.
+   *
+   * Domains partition the network: nodes in different domains must not
+   * discover each other, so cross-domain peers are dropped here — before
+   * they can reach probing, hub election, or the topology snapshot.
+   * When unset (null), no domain filtering is applied.
+   * @param domain - This node's domain
+   */
+  setSelfDomain(domain: string): void {
+    this._selfDomain = domain;
   }
 
   /**
@@ -137,6 +153,11 @@ export class PeerTable {
   private _addPeerFromLayer(layerName: string, peer: NodeInfo): void {
     // Don't add self to peer table
     if (this._selfId && peer.nodeId === this._selfId) return;
+
+    // Domain isolation: never merge peers from another domain, so nodes in
+    // different domains don't see or discover each other and hub election
+    // only ever considers same-domain candidates.
+    if (this._selfDomain !== null && peer.domain !== this._selfDomain) return;
 
     const layerSet = this._layerPeers.get(layerName)!;
     layerSet.add(peer.nodeId);

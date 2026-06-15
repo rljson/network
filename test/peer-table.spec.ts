@@ -431,4 +431,72 @@ describe('PeerTable', () => {
       expect(listB).toEqual(['node-1']);
     });
   });
+
+  // .........................................................................
+  // Domain isolation — setSelfDomain
+  // .........................................................................
+
+  describe('setSelfDomain', () => {
+    /** Build a peer in an explicit domain */
+    const peerInDomain = (id: string, domain: string): NodeInfo => ({
+      ...testPeer(id),
+      domain,
+    });
+
+    it('drops peers from a different domain', () => {
+      table.setSelfDomain('test');
+      const layer = new MockLayer('layer-a');
+      table.attachLayer(layer);
+
+      const joined: string[] = [];
+      table.on('peer-joined', (peer) => joined.push(peer.nodeId));
+
+      layer.addPeer(peerInDomain('other-domain-node', 'other'));
+
+      expect(joined).toEqual([]);
+      expect(table.size).toBe(0);
+      expect(table.getPeer('other-domain-node')).toBeUndefined();
+    });
+
+    it('keeps peers from the same domain', () => {
+      table.setSelfDomain('test');
+      const layer = new MockLayer('layer-a');
+      table.attachLayer(layer);
+
+      const joined: string[] = [];
+      table.on('peer-joined', (peer) => joined.push(peer.nodeId));
+
+      layer.addPeer(peerInDomain('same-domain-node', 'test'));
+
+      expect(joined).toEqual(['same-domain-node']);
+      expect(table.size).toBe(1);
+      expect(table.getPeer('same-domain-node')).toBeDefined();
+    });
+
+    it('drops cross-domain peers imported on attach', () => {
+      table.setSelfDomain('test');
+      const layer = new MockLayer('layer-a');
+      layer.setInitialPeers([
+        peerInDomain('keep', 'test'),
+        peerInDomain('drop', 'other'),
+      ]);
+
+      table.attachLayer(layer);
+
+      expect(table.size).toBe(1);
+      expect(table.getPeer('keep')).toBeDefined();
+      expect(table.getPeer('drop')).toBeUndefined();
+    });
+
+    it('applies no domain filtering when self domain is unset', () => {
+      // beforeEach only sets selfId, not selfDomain
+      const layer = new MockLayer('layer-a');
+      table.attachLayer(layer);
+
+      layer.addPeer(peerInDomain('any-domain-node', 'whatever'));
+
+      expect(table.size).toBe(1);
+      expect(table.getPeer('any-domain-node')).toBeDefined();
+    });
+  });
 });

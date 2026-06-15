@@ -364,6 +364,42 @@ describe('CloudLayer', () => {
       vi.useRealTimers();
     });
 
+    it('drops peers from a different domain', async () => {
+      vi.useFakeTimers();
+      const pollLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      cloud.nextResponse = { peers: [], assignedHub: null };
+      await pollLayer.start(testIdentity());
+
+      const discovered: NodeInfo[] = [];
+      pollLayer.on('peer-discovered', (peer) => discovered.push(peer));
+
+      // Response mixes a same-domain peer with a cross-domain one
+      cloud.nextResponse = {
+        peers: [
+          fakePeer('same-domain-peer'),
+          fakePeer('cross-domain-peer', 'other-domain'),
+        ],
+        assignedHub: null,
+      };
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(discovered.map((p) => p.nodeId)).toEqual(['same-domain-peer']);
+      expect(pollLayer.getPeers().map((p) => p.nodeId)).toEqual([
+        'same-domain-peer',
+      ]);
+
+      await pollLayer.stop();
+      vi.useRealTimers();
+    });
+
     it('removes peers no longer in cloud response', async () => {
       cloud.nextResponse = {
         peers: [fakePeer('peer-a'), fakePeer('peer-b')],
@@ -1151,7 +1187,7 @@ describe('CloudLayer', () => {
             nodeId: 'throw-peer',
             hostname: 'tp',
             localIps: ['10.0.0.1'],
-            domain: 'test',
+            domain: 'test-domain',
             port: 3000,
             startedAt: 1700000000000,
           },
@@ -1172,7 +1208,7 @@ describe('CloudLayer', () => {
             nodeId: 'throw-peer',
             hostname: 'tp',
             localIps: ['10.0.0.1'],
-            domain: 'test',
+            domain: 'test-domain',
             port: 3000,
             startedAt: 1700000000000,
           },
@@ -1180,7 +1216,7 @@ describe('CloudLayer', () => {
             nodeId: 'throw-peer-2',
             hostname: 'tp2',
             localIps: ['10.0.0.2'],
-            domain: 'test',
+            domain: 'test-domain',
             port: 3001,
             startedAt: 1700000000001,
           },

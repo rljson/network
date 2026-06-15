@@ -194,6 +194,10 @@ export class NetworkManager {
     });
 
     this._peerTable.setSelfId(this._identity.nodeId);
+    // Domain isolation: peers from other domains are never merged, so nodes
+    // in different domains don't discover each other and election only ever
+    // considers same-domain candidates.
+    this._peerTable.setSelfDomain(this._identity.domain);
 
     // Attach layers to peer table
     this._peerTable.attachLayer(this._manualLayer);
