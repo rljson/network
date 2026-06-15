@@ -64,6 +64,32 @@ Discovery layers are tried in order of autonomy:
 2. **Earliest `startedAt`**: If no incumbent, the node started first wins.
 3. **Tiebreaker**: Lexicographic `nodeId` comparison.
 
+### Startup-Race Deferral (no second hub)
+
+`electHub()` only considers a candidate reachable once it has been probed
+successfully. During a cold start (e.g. two nodes booting at once, neither
+hub transport open yet) **every** node's probes fail, so each node would elect
+**itself** — a split-brain.
+
+To prevent this, `_computeHub()` adds a deferral guard: when election picks
+`self` (non-incumbent) **and** a real peer (broadcast or cloud — never a
+synthetic static peer) with an **earlier `startedAt`** exists that has **never**
+been successfully probed, the node **defers**. Only the earliest node
+self-promotes; every later node stays out of the way until the earliest node's
+hub transport comes up, then joins it via normal probing.
+
+A deferring node still falls through to the cloud/static cascade so it can join
+a cloud-assigned **other** hub, **but the cascade is forbidden from re-electing
+the deferring node itself**. Without that guard the cloud (whose hub-selection
+criterion can differ from earliest-`startedAt`) could assign this very node as
+hub — forming a **second** hub alongside the earliest node, the classic
+two-node split-brain. While deferring, a cloud self-assignment is rejected and
+the node remains `unassigned` until the earliest peer is reachable.
+
+Crash recovery is unaffected: a crashed hub was previously reachable
+(`hasEverBeenReachable === true`), so it does **not** trigger deferral and the
+survivor self-elects normally.
+
 ### Election Implementation
 
 `electHub()` in `src/election/hub-election.ts` is a **pure function** — no
@@ -268,6 +294,9 @@ Central orchestrator — the main public API:
   2. Election via probes (if probes available → `electHub()`)
      - `formedBy: 'broadcast'` when broadcast layer is active with peers
      - `formedBy: 'election'` otherwise
+     - **Startup-race deferral**: if election picks self while an earlier,
+       never-probed real peer exists, defer — and forbid the cloud/static
+       cascade from re-electing self (see _Startup-Race Deferral_ above)
   3. Cloud assignment (cloud dictates hub — has the full picture)
   4. Static config fallback
   5. No result → `unassigned`
