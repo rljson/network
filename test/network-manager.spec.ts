@@ -1225,6 +1225,89 @@ describe('NetworkManager', () => {
       expect(topology.hubNodeId).not.toBe('unreachable-hub');
     });
 
+    it('rejects cloud self-assignment while deferring to earlier peer', async () => {
+      // Two-node split-brain guard: this node defers self-election because an
+      // earlier-started cloud peer exists that has never been probed.  Even if
+      // the cloud then assigns THIS node as hub (its hub-selection criterion
+      // can differ from earliest-startedAt), the node must NOT accept — that
+      // would form a second hub alongside the earliest node.  It stays
+      // unassigned until the earlier peer's transport comes up.
+      vi.useFakeTimers();
+      try {
+        const mock = new MockCloudService();
+        // An earlier-started peer (startedAt = 1000, well before self) that is
+        // never reachable, plus no hub assignment yet.
+        mock.nextResponse = {
+          peers: [
+            {
+              nodeId: 'earlier-peer',
+              hostname: 'early',
+              localIps: ['10.0.0.7'],
+              domain: 'test-domain',
+              port: 3000,
+              startedAt: 1000,
+            },
+          ],
+          assignedHub: null,
+        };
+
+        // Probe always fails — the earlier peer's transport is not up.
+        const mockProbe: ProbeFn = async (
+          _h,
+          _p,
+          fromNodeId,
+          toNodeId,
+        ): Promise<PeerProbe> => ({
+          fromNodeId,
+          toNodeId,
+          reachable: false,
+          latencyMs: -1,
+          measuredAt: Date.now(),
+        });
+
+        manager = new NetworkManager(
+          testConfig({
+            cloud: {
+              enabled: true,
+              endpoint: 'http://cloud.test',
+              pollIntervalMs: 1000,
+            },
+            probing: { enabled: true, intervalMs: 60000 },
+          }),
+          { cloudDeps: createMockCloudDeps(mock), probeFn: mockProbe },
+        );
+        await manager.start();
+
+        const selfId = manager.getIdentity().nodeId;
+
+        // Probe the earlier peer → unreachable.  Deferral becomes active.
+        await manager.getProbeScheduler().runOnce();
+
+        // Now the cloud assigns THIS node as hub on the next poll.
+        mock.nextResponse = {
+          peers: [
+            {
+              nodeId: 'earlier-peer',
+              hostname: 'early',
+              localIps: ['10.0.0.7'],
+              domain: 'test-domain',
+              port: 3000,
+              startedAt: 1000,
+            },
+          ],
+          assignedHub: selfId,
+        };
+        await vi.advanceTimersByTimeAsync(1000);
+
+        const topology = manager.getTopology();
+        // Self-assignment is rejected while deferring → stays unassigned.
+        expect(topology.hubNodeId).toBeNull();
+        expect(topology.myRole).toBe('unassigned');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('rejects static hub that is known unreachable', async () => {
       // Mock probe that always reports unreachable
       const mockProbe: ProbeFn = async (

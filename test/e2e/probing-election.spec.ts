@@ -411,7 +411,8 @@ describe('E2E: Probing + Election path', () => {
     expect(topoA.hubNodeId).toBe(idA);
     expect(topoA.myRole).toBe('hub');
 
-    // Node B (later startedAt): should DEFER — not self-elect
+    // Node B (later startedAt): should DEFER — not self-elect.  It stays
+    // unassigned until A opens its hub transport, then joins A via probing.
     const topoB = managerB.getTopology();
     expect(topoB.hubNodeId).toBeNull();
     expect(topoB.myRole).toBe('unassigned');
