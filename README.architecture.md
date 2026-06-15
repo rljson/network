@@ -227,6 +227,17 @@ Configuration (`BroadcastConfig`):
 - Creates a **synthetic peer** with deterministic nodeId `static-hub-<address>`
 - Returns `false` from `start()` if no `hubAddress` configured
 - Emits `peer-discovered` + `hub-assigned` on start, `peer-lost` on stop
+- The synthetic peer always carries the **self domain**, so it is never
+  dropped by domain isolation
+
+### CloudLayer (Try 2 — Cross-network Fallback)
+
+- Registers with a cloud coordinator, polls for the peer list, and reports
+  probe results
+- **Domain filtering**: although the coordinator scopes `/peers` by `domain`
+  server-side, the layer also drops any returned peer whose `domain` differs
+  from its own. This guards the deferral logic in `_computeHub()`, which reads
+  `CloudLayer.getPeers()` directly (bypassing the PeerTable gate)
 
 ## PeerTable Design
 
@@ -237,6 +248,11 @@ Merged view of all peers from all discovery layers:
 - `peer-joined` fires only when a genuinely **new** peer is first seen
 - `peer-left` fires only when **all** layers have lost the peer
 - `setSelfId()` excludes own node from the peer table
+- `setSelfDomain()` enforces **domain isolation** — peers whose `domain`
+  differs from the configured one are dropped here, the single chokepoint
+  where every layer's peers merge. Cross-domain peers therefore never reach
+  probing, hub election, or the topology snapshot, so nodes in different
+  domains never see or discover each other. When unset, no filtering applies.
 - `attachLayer()` imports existing peers + subscribes to future events
 
 ## NetworkManager Design
