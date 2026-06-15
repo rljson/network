@@ -236,6 +236,10 @@ await layer.reportProbes(probes);
 await layer.stop();
 ```
 
+The layer drops any returned peer whose `domain` differs from its own, so a
+stray cross-domain entry from the coordinator never enters discovery or
+election.
+
 For testing, inject a mock HTTP client:
 
 ```typescript
@@ -276,6 +280,7 @@ import { PeerTable } from '@rljson/network';
 
 const table = new PeerTable();
 table.setSelfId(identity.nodeId);
+table.setSelfDomain(identity.domain); // Drop peers from other domains
 
 table.attachLayer(staticLayer);    // Import peers + subscribe to events
 table.attachLayer(manualLayer);
@@ -283,9 +288,16 @@ table.attachLayer(manualLayer);
 table.on('peer-joined', (peer) => console.log('New peer:', peer.nodeId));
 table.on('peer-left', (nodeId) => console.log('Lost peer:', nodeId));
 
-console.log(table.getPeers());    // All known peers
+console.log(table.getPeers());    // All known peers (same domain only)
 console.log(table.size);          // Number of peers
 ```
+
+`setSelfDomain()` enforces **domain isolation**: peers whose `domain` differs
+from the configured one are never merged. Because the PeerTable is the single
+point where every layer's peers come together, this guarantees that nodes in
+different domains never see or discover each other, and hub election only ever
+considers same-domain candidates. `NetworkManager` calls it automatically on
+start with the configured `domain`.
 
 ## NetworkManager
 

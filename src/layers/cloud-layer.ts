@@ -505,6 +505,12 @@ export class CloudLayer implements DiscoveryLayer {
       // Never add self to peer table
       if (peer.nodeId === this._identity?.nodeId) continue;
 
+      // Domain isolation: ignore peers from other domains. The cloud scopes
+      // by domain server-side, but enforce it client-side too so a stray
+      // cross-domain peer never enters discovery, probing, or election —
+      // including the deferral logic that reads cloud peers directly.
+      if (peer.domain !== this._identity?.domain) continue;
+
       newPeerIds.add(peer.nodeId);
       const isNew = !this._peers.has(peer.nodeId);
       this._peers.set(peer.nodeId, peer);
