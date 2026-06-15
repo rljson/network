@@ -534,6 +534,13 @@ export class NetworkManager {
 
     // Try 1+2: Election among probed peers
     // If we have probe results, use election algorithm
+    //
+    // When a startup-race deferral fires below, this flag forbids the cloud /
+    // static cascade from electing THIS node as hub (it may still join a
+    // cloud-assigned OTHER hub).  This prevents a deferring node from being
+    // re-elected as a second hub by the cloud, which caused two-node
+    // split-brain.
+    let deferringSelfElection = false;
     const probes = this._probeScheduler.getProbes();
     if (probes.length > 0 && this._identity) {
       // Build candidates: self + all known peers, excluding temporarily
@@ -589,8 +596,12 @@ export class NetworkManager {
         // deferral does not trigger.
         //
         // When deferred, we fall through to the cloud/static cascade so the
-        // node can still join as client under a cloud-assigned hub instead
-        // of becoming unassigned.
+        // node can still join a cloud-assigned OTHER hub instead of becoming
+        // unassigned — but we set `deferringSelfElection` so the cascade is
+        // forbidden from re-electing THIS node as hub (see Try 2/3 below).
+        // Without that guard the cloud could assign this very node as hub,
+        // defeating the deferral and forming a SECOND hub alongside the
+        // earliest node — the classic two-node split-brain.
         if (
           result.hubId === this._identity.nodeId &&
           result.reason !== 'incumbent'
@@ -614,8 +625,9 @@ export class NetworkManager {
               'election',
               `Deferring self-election: untested earlier peer exists`,
             );
-            // Fall through to cloud/static cascade instead of self-electing.
-            // Do NOT return here — let the cascade handle it.
+            // Fall through to cloud/static cascade instead of self-electing,
+            // but forbid the cascade from electing self (see below).
+            deferringSelfElection = true;
           } else {
             // Determine formedBy: 'broadcast' if broadcast layer contributed peers
             const formedBy: FormedBy =
@@ -651,7 +663,19 @@ export class NetworkManager {
     if (this._cloudLayer.isActive()) {
       const cloudHub = this._cloudLayer.getAssignedHub();
       if (cloudHub) {
-        if (this._isKnownUnreachableOrExcluded(cloudHub)) {
+        if (
+          deferringSelfElection &&
+          cloudHub === this._identity?.nodeId
+        ) {
+          // We deferred self-election to an earlier, still-starting peer; the
+          // cloud must NOT re-elect this very node as hub, or a second hub
+          // would form alongside the earliest node (two-node split-brain).
+          // Stay unassigned and wait for the earliest peer's hub transport.
+          this._log(
+            'election',
+            `Rejecting cloud self-assignment while deferring to earlier peer`,
+          );
+        } else if (this._isKnownUnreachableOrExcluded(cloudHub)) {
           this._log(
             'election',
             `Rejecting cloud hub ${cloudHub.slice(0, 8)}... ` +
