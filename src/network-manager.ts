@@ -313,7 +313,18 @@ export class NetworkManager {
   /**
    * Stop the network manager.
    *
-   * Stops all layers and clears state.
+   * Stops all layers and clears the state discovery produced — peers, the
+   * elected hub, this node's role, election exclusions.
+   *
+   * Event subscriptions are deliberately NOT dropped. They are the host's
+   * wiring, registered once when the host builds the manager, and they
+   * describe what the host wants to know for as long as it lives — not for
+   * as long as the layers happen to be up. Clearing them made `stop()` a
+   * one-way door: a host that stopped and started again (see
+   * {@link setDomain}) came back discovering peers and electing hubs with
+   * nobody listening, so the cloud bridge was never re-synced and the hub
+   * reconcile never ran. The node reported itself healthy and was deaf.
+   * A host that genuinely wants to unsubscribe has {@link off}.
    */
   async stop(): Promise<void> {
     if (!this._running) return;
@@ -326,7 +337,6 @@ export class NetworkManager {
     await this._staticLayer.stop();
 
     this._peerTable.clear();
-    this._listeners.clear();
     this._excludedNodes.clear();
 
     this._currentHubId = null;
@@ -389,6 +399,41 @@ export class NetworkManager {
       throw new Error('NetworkManager not started');
     }
     return this._identity;
+  }
+
+  /**
+   * Move this node to another domain — a re-home.
+   *
+   * Domains partition the network: a peer in another domain is dropped
+   * before it is ever merged, and hub election only ever considers
+   * same-domain candidates. So this is not a label change; it takes the node
+   * out of one network and puts it in another.
+   *
+   * Only valid while stopped, and the caller must start again afterwards:
+   * `await nm.stop(); nm.setDomain('labB'); await nm.start();`. The domain is
+   * read in {@link start}, when the identity is built — setting it on a
+   * running manager would leave the node announcing one domain while
+   * filtering peers by another, which is a state no real node can be in.
+   *
+   * **This changes the nodeId.** The id is persisted per domain
+   * (`<identityDir>/<domain>/node-id`), so a node returning to a domain it
+   * has been in before recovers its old id, and a node entering a new one
+   * gets a new id. That is the design — a re-homed node is a new member of
+   * the network it joins — but anything the host keys on nodeId (hub
+   * overrides, per-node lineages, stored client identity) is keyed on the
+   * OLD id and will not recognise this node after the move.
+   * Throws if the manager is running.
+   * @param domain - The domain to join.
+   */
+  setDomain(domain: string): void {
+    if (this._running) {
+      throw new Error(
+        'setDomain requires a stopped manager: stop(), setDomain(), start(). ' +
+          'Changing the domain of a running manager would announce one ' +
+          'domain while filtering peers by another.',
+      );
+    }
+    this._config.domain = domain;
   }
 
   // .........................................................................

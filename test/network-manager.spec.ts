@@ -6,6 +6,9 @@
 
 import { describe, expect, it, afterEach, vi } from 'vitest';
 import { createServer, createConnection, type Server, type AddressInfo } from 'node:net';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { NetworkManager } from '../src/network-manager';
 import { defaultNetworkConfig } from '../src/types/network-config';
@@ -1464,6 +1467,112 @@ describe('NetworkManager', () => {
       const topology = manager.getTopology();
       expect(topology.hubNodeId).toBe('new-hub');
       expect(topology.formedBy).toBe('cloud');
+    });
+  });
+  // .........................................................................
+  // Re-home (domain change)
+  // .........................................................................
+
+  describe('setDomain', () => {
+    let identityDir: string;
+
+    afterEach(() => {
+      if (identityDir) rmSync(identityDir, { recursive: true, force: true });
+    });
+
+    const homedManager = (domain: string) => {
+      identityDir ??= mkdtempSync(join(tmpdir(), 'nm-rehome-'));
+      return new NetworkManager(
+        testConfig({ domain, identityDir, broadcast: { enabled: false } }),
+      );
+    };
+
+    it('throws while running, because a live change is an impossible state', async () => {
+      manager = homedManager('labA');
+      await manager.start();
+
+      expect(() => manager.setDomain('labB')).toThrow(/requires a stopped/);
+      // And it did NOT take effect: a manager that announced labB while
+      // filtering peers by labA would see nobody and blame the network.
+      expect(manager.getTopology().domain).toBe('labA');
+    });
+
+    it('re-homes across a stop/start, with a new nodeId', async () => {
+      manager = homedManager('labA');
+      await manager.start();
+      const idInA = manager.getIdentity().nodeId;
+      expect(manager.getTopology().domain).toBe('labA');
+
+      await manager.stop();
+      manager.setDomain('labB');
+      await manager.start();
+
+      expect(manager.getTopology().domain).toBe('labB');
+      // The id is persisted per domain, so joining a new one means becoming a
+      // new member of it. Asserted because anything the host keys on nodeId
+      // will not recognise this node afterwards.
+      expect(manager.getIdentity().nodeId).not.toBe(idInA);
+    });
+
+    it('recovers its old nodeId when it returns to a domain it has been in', async () => {
+      manager = homedManager('labA');
+      await manager.start();
+      const idInA = manager.getIdentity().nodeId;
+
+      await manager.stop();
+      manager.setDomain('labB');
+      await manager.start();
+      await manager.stop();
+      manager.setDomain('labA');
+      await manager.start();
+
+      expect(manager.getIdentity().nodeId).toBe(idInA);
+    });
+
+    it('keeps the host subscribed across the restart', async () => {
+      // The reason stop() no longer clears listeners. A host whose
+      // subscriptions were dropped comes back electing hubs with nobody
+      // listening: no cloud bridge re-sync, no hub reconcile, and a health
+      // report that says everything is fine.
+      manager = homedManager('labA');
+      const seen: TopologyChangedEvent[] = [];
+      manager.on('topology-changed', (e) => seen.push(e));
+
+      await manager.start();
+      const afterFirstStart = seen.length;
+      expect(afterFirstStart).toBeGreaterThan(0);
+
+      await manager.stop();
+      manager.setDomain('labB');
+      await manager.start();
+
+      expect(seen.length).toBeGreaterThan(afterFirstStart);
+      // And what it hears describes where the node actually is now.
+      expect(seen[seen.length - 1]?.topology.domain).toBe('labB');
+    });
+
+    it('carries no peer from the old domain into the new one', async () => {
+      manager = homedManager('labA');
+      await manager.start();
+      const peerInA: NodeInfo = {
+        nodeId: 'peer-in-a',
+        hostname: 'a-host',
+        platform: 'linux',
+        domain: 'labA',
+        port: 1234,
+        localIps: ['10.0.0.9'],
+        startedAt: Date.now(),
+      };
+      manager.assignHub(peerInA.nodeId as never);
+      expect(manager.getTopology().hubNodeId).toBe('peer-in-a');
+
+      await manager.stop();
+      manager.setDomain('labB');
+      await manager.start();
+
+      // A hub from the old domain must not survive the move: the node would
+      // be in labB taking orders from labA.
+      expect(manager.getTopology().hubNodeId).not.toBe('peer-in-a');
     });
   });
 });
