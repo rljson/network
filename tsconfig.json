@@ -4,6 +4,7 @@
     "useDefineForClassFields": true,
     "module": "NodeNext",
     "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "types": ["node"],
     "skipLibCheck": true,
 
     /* Distribution */
