@@ -318,7 +318,7 @@ describe('NodeIdentity', () => {
         deps,
       });
 
-      const writtenPath = Object.keys(written)[0]!;
+      const writtenPath = Object.keys(written)[0]!.replace(/\\/g, '/');
       expect(writtenPath).toContain('/custom/identity');
       expect(writtenPath).toContain('my-domain');
     });
@@ -331,7 +331,7 @@ describe('NodeIdentity', () => {
         deps,
       });
 
-      const writtenPath = Object.keys(written)[0]!;
+      const writtenPath = Object.keys(written)[0]!.replace(/\\/g, '/');
       expect(writtenPath).toContain('/mock/home/.rljson-network');
     });
   });
