@@ -24,6 +24,20 @@ export interface CloudPeerListResponse {
   peers: NodeInfo[];
   /** Hub assigned by the cloud (null if not yet decided) */
   assignedHub: NodeId | null;
+  /**
+   * Whether the cloud is coordinating this domain's hub, or only observing it.
+   *
+   * - `'manual'` (or absent) — **the LAN organises itself.** The local
+   *   election decides and `assignedHub` is a cold-start seed, which is what
+   *   this layer has always been in practice.
+   * - `'auto'` — **cloud-coordinated.** The local election stands down and the
+   *   cloud's choice governs, which is the only mode in which a cloud-side
+   *   hub policy means anything on a machine.
+   *
+   * Optional, because a node may be talking to a coordinator older than this
+   * field. Absent is read as `'manual'`: the mode that changes nothing.
+   */
+  hubPolicy?: 'auto' | 'manual';
 }
 
 // .............................................................................
@@ -202,6 +216,15 @@ export class CloudLayer implements DiscoveryLayer {
   private _pollTimer: ReturnType<typeof setTimeout> | null = null;
   private _peers = new Map<NodeId, NodeInfo>();
   private _assignedHub: NodeId | null = null;
+
+  /**
+   * Whether the cloud is coordinating this domain's hub.
+   *
+   * False until a response says otherwise, and reset when the layer stops, so
+   * a node that loses the cloud returns to organising itself rather than
+   * holding a decision nobody is renewing.
+   */
+  private _cloudCoordinated = false;
   private _listeners = new Map<string, Set<Listener>>();
   private readonly _httpClient: CloudHttpClient;
 
@@ -307,6 +330,7 @@ export class CloudLayer implements DiscoveryLayer {
 
     this._peers.clear();
     this._assignedHub = null;
+    this._cloudCoordinated = false;
     this._active = false;
     this._identity = null;
     this._listeners.clear();
@@ -334,6 +358,20 @@ export class CloudLayer implements DiscoveryLayer {
    */
   getAssignedHub(): NodeId | null {
     return this._assignedHub;
+  }
+
+  /**
+   * Whether the cloud is coordinating this domain's hub, rather than observing.
+   *
+   * Only true while the layer is active AND the coordinator says `auto` AND it
+   * has actually named a hub. All three matter: a coordinated domain whose
+   * cloud has gone away, or which the cloud has not decided about yet, must
+   * fall back to the local election rather than sit without a hub. A branch
+   * that cannot reach the cloud must not lose its own network.
+   * @returns True when the local election should stand down.
+   */
+  isCloudCoordinated(): boolean {
+    return this._active && this._cloudCoordinated && this._assignedHub !== null;
   }
 
   /** Get current consecutive poll failure count (for diagnostics/testing) */
@@ -529,6 +567,7 @@ export class CloudLayer implements DiscoveryLayer {
     }
 
     // Update hub assignment
+    this._cloudCoordinated = response.hubPolicy === 'auto';
     const previousHub = this._assignedHub;
     this._assignedHub = response.assignedHub;
 

@@ -637,6 +637,105 @@ describe('NetworkManager', () => {
   // Cloud layer integration
   // .........................................................................
 
+  describe('cloud-coordinated hub', () => {
+    /** A probe that reaches everything, so the local election has data. */
+    const reachableProbe: ProbeFn = async (
+      _h,
+      _p,
+      fromNodeId,
+      toNodeId,
+    ): Promise<PeerProbe> => ({
+      fromNodeId,
+      toNodeId,
+      reachable: true,
+      latencyMs: 1.0,
+      measuredAt: Date.now(),
+    });
+
+    /**
+     * A manager whose cloud answers with this policy and hub.
+     * @param hubPolicy - What the coordinator says about this domain.
+     * @param assignedHub - The hub it names.
+     * @returns The started manager.
+     */
+    const managerWith = async (
+      hubPolicy: 'auto' | 'manual' | undefined,
+      assignedHub: string,
+    ): Promise<NetworkManager> => {
+      const mock = new MockCloudService();
+      mock.nextResponse = {
+        peers: [
+          {
+            nodeId: assignedHub,
+            hostname: 'hub',
+            localIps: ['10.0.0.99'],
+            domain: 'test-domain',
+            port: 3000,
+            startedAt: 1700000000000,
+          },
+        ],
+        assignedHub,
+        ...(hubPolicy === undefined ? {} : { hubPolicy }),
+      };
+      const nm = new NetworkManager(
+        testConfig({
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        { cloudDeps: createMockCloudDeps(mock), probeFn: reachableProbe },
+      );
+      await nm.start();
+      // Probes present: without them the cloud is only a cold-start seed, and
+      // the distinction this whole mode rests on would not be exercised.
+      await nm.getProbeScheduler().runOnce();
+      return nm;
+    };
+
+    it('lets the LAN organise itself under manual, even with a cloud hub', async () => {
+      // The default. The cloud has named a hub and the node ignores it,
+      // because a probed LAN knows better than a seed.
+      manager = await managerWith('manual', 'cloud-hub-1');
+
+      expect(manager.getTopology().formedBy).toBe('election');
+    });
+
+    it('lets the LAN organise itself when the coordinator says nothing', async () => {
+      // An older coordinator. Absent must read as manual, never as auto.
+      manager = await managerWith(undefined, 'cloud-hub-1');
+
+      expect(manager.getTopology().formedBy).toBe('election');
+    });
+
+    it('stands the local election down under auto', async () => {
+      // The point of the mode, and what was missing: before this, switching a
+      // domain to "Cloud Coordinated" changed nothing on any machine, because
+      // the cascade returned at the local election and never reached the
+      // cloud branch.
+      manager = await managerWith('auto', 'cloud-hub-1');
+
+      const topology = manager.getTopology();
+      expect(topology.formedBy).toBe('cloud');
+      expect(topology.hubNodeId).toBe('cloud-hub-1');
+    });
+
+    it('falls back to the election when the coordinated hub is unreachable', async () => {
+      // Obeying a hub this node cannot reach would mean choosing no working
+      // hub over a working one. A site must not lose its network to a remote
+      // decision made on stale information.
+      manager = await managerWith('auto', 'cloud-hub-1');
+      expect(manager.getTopology().formedBy).toBe('cloud');
+
+      manager.excludeFromElection('cloud-hub-1', 60_000);
+      await manager.getProbeScheduler().runOnce();
+
+      expect(manager.getTopology().formedBy).toBe('election');
+    });
+  });
+
   describe('cloud layer', () => {
     it('cloud hub assignment dictates topology', async () => {
       const mock = new MockCloudService();

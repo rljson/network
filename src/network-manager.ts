@@ -562,12 +562,18 @@ export class NetworkManager {
    *
    * Priority:
    *   1. Manual override (human knows best)
-   *   2. Election among probed peers (most autonomous)
+   *   2. Cloud-coordinated assignment — ONLY when the coordinator says this
+   *      domain is `auto` and has named a reachable hub. Then the local
+   *      election stands down and the cloud governs.
+   *   3. Election among probed peers (most autonomous, and the default)
    *      - formedBy 'broadcast' if broadcast layer provided peers
    *      - formedBy 'election' otherwise
-   *   3. Cloud assignment (sees full picture, dictates hub)
-   *   4. Static config (last resort)
-   *   5. Nothing → unassigned
+   *   4. Cloud assignment as a COLD-START SEED — reached only when the
+   *      election had nothing to go on. This is what step 2 used to be, and
+   *      the distinction is the whole point: seeding a node that knows nothing
+   *      is not the same as overruling one that does.
+   *   5. Static config (last resort)
+   *   6. Nothing → unassigned
    */
   private _computeHub(): { hubId: NodeId | null; formedBy: FormedBy } {
     // Override: manual always wins
@@ -575,6 +581,40 @@ export class NetworkManager {
     if (manualHub) {
       this._log('election', `Manual override: hub=${manualHub.slice(0, 8)}...`);
       return { hubId: manualHub, formedBy: 'manual' };
+    }
+
+    // Cloud-coordinated: the local election stands down.
+    //
+    // Without this the cloud never coordinated anything. The cascade below
+    // returns as soon as the local election produces a hub, so the cloud
+    // branch further down is reachable only at cold start — which made a
+    // cloud-side hub policy advisory, and silently so: switching a domain to
+    // "Cloud Coordinated" would have changed nothing on any machine.
+    //
+    // `isCloudCoordinated()` is deliberately narrow: active layer, policy
+    // `auto`, AND a hub actually named. If the cloud goes away or has not
+    // decided yet, this falls through to the local election rather than
+    // leaving the branch without a hub. A site that cannot reach Azure must
+    // not lose its own network.
+    if (this._cloudLayer.isCloudCoordinated()) {
+      const cloudHub = this._cloudLayer.getAssignedHub()!;
+      if (this._isKnownUnreachableOrExcluded(cloudHub)) {
+        // The cloud's pick is one this node knows it cannot reach. Obeying it
+        // would mean choosing no working hub over a working one, so the local
+        // election takes over and the disagreement is said out loud.
+        this._log(
+          'election',
+          `Cloud-coordinated hub ${cloudHub.slice(0, 8)}... is unreachable ` +
+            `from here — falling back to the local election`,
+        );
+      } else {
+        this._log(
+          'election',
+          `Cloud-coordinated: hub=${cloudHub.slice(0, 8)}... ` +
+            `(local election stood down)`,
+        );
+        return { hubId: cloudHub, formedBy: 'cloud' };
+      }
     }
 
     // Try 1+2: Election among probed peers
