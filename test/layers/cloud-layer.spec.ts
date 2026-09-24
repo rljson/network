@@ -1236,6 +1236,112 @@ describe('CloudLayer', () => {
   // Backoff and re-registration
   // .........................................................................
 
+  describe('cloud-coordinated mode', () => {
+    it('is off unless the coordinator says auto', async () => {
+      // The default, and the one that changes nothing: the LAN organises
+      // itself and the cloud's hub is a cold-start seed.
+      cloud.nextResponse = {
+        peers: [fakePeer('peer-a')],
+        assignedHub: 'peer-a',
+      };
+
+      await layer.start(testIdentity());
+
+      expect(layer.isCloudCoordinated()).toBe(false);
+    });
+
+    it('is off for a coordinator too old to say', async () => {
+      // `hubPolicy` is optional on the wire. A node talking to an older
+      // coordinator must keep organising itself rather than stand down for a
+      // decision nobody is making.
+      cloud.nextResponse = {
+        peers: [fakePeer('peer-a')],
+        assignedHub: 'peer-a',
+        hubPolicy: undefined,
+      };
+
+      await layer.start(testIdentity());
+
+      expect(layer.isCloudCoordinated()).toBe(false);
+    });
+
+    it('is on when the coordinator says auto and names a hub', async () => {
+      cloud.nextResponse = {
+        peers: [fakePeer('peer-a')],
+        assignedHub: 'peer-a',
+        hubPolicy: 'auto',
+      };
+
+      await layer.start(testIdentity());
+
+      expect(layer.isCloudCoordinated()).toBe(true);
+    });
+
+    it('is off while the cloud has not decided, even under auto', async () => {
+      // Standing down for a hub nobody has named would leave the branch with
+      // no hub at all. Coordination means obeying a decision, not waiting for
+      // one.
+      cloud.nextResponse = {
+        peers: [fakePeer('peer-a')],
+        assignedHub: null,
+        hubPolicy: 'auto',
+      };
+
+      await layer.start(testIdentity());
+
+      expect(layer.isCloudCoordinated()).toBe(false);
+    });
+
+    it('is off once the layer stops, so a lost cloud returns the LAN to itself', async () => {
+      // The case that matters most in a branch: the internet goes away. The
+      // site must go back to organising itself rather than hold a decision
+      // nobody is renewing.
+      cloud.nextResponse = {
+        peers: [fakePeer('peer-a')],
+        assignedHub: 'peer-a',
+        hubPolicy: 'auto',
+      };
+      await layer.start(testIdentity());
+      expect(layer.isCloudCoordinated()).toBe(true);
+
+      await layer.stop();
+
+      expect(layer.isCloudCoordinated()).toBe(false);
+    });
+
+    it('follows the coordinator back to manual', async () => {
+      // Switching a domain off in the cloud has to reach the machines without
+      // restarting them.
+      vi.useFakeTimers();
+      const polling = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 1000,
+        },
+        { createHttpClient: () => cloud },
+      );
+      cloud.nextResponse = {
+        peers: [fakePeer('peer-a')],
+        assignedHub: 'peer-a',
+        hubPolicy: 'auto',
+      };
+      await polling.start(testIdentity());
+      expect(polling.isCloudCoordinated()).toBe(true);
+
+      cloud.nextResponse = {
+        peers: [fakePeer('peer-a')],
+        assignedHub: 'peer-a',
+        hubPolicy: 'manual',
+      };
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(polling.isCloudCoordinated()).toBe(false);
+      await polling.stop();
+      vi.useRealTimers();
+    });
+  });
+
   describe('exponential backoff', () => {
     it('doubles poll interval after each consecutive failure', async () => {
       vi.useFakeTimers();
