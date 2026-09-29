@@ -1600,4 +1600,113 @@ describe('CloudLayer', () => {
       vi.useRealTimers();
     });
   });
+  // .........................................................................
+  // Registration keeps trying
+  // .........................................................................
+
+  describe('registration retry', () => {
+    it('keeps trying after a failed registration, instead of dying', async () => {
+      // THE BUG. `start()` returned false and stopped, which is right about
+      // the immediate question — do not block the node on the cloud — and
+      // wrong about every moment after: the only code that re-registers lives
+      // in `_poll()`, and `_poll()` never runs unless `start()` finished. So
+      // one failed call left the layer dead for the life of the process, and
+      // the node stayed invisible to the Coordinator while syncing perfectly
+      // over the LAN. Seen live: a workstation booted in the three seconds its
+      // platform took to restart, got 503, and was still missing hours later.
+      vi.useFakeTimers();
+      try {
+        cloud.registerError = new Error('Cloud register failed: 503');
+        expect(await layer.start(testIdentity()), 'falls through to broadcast').toBe(
+          false,
+        );
+        expect(layer.isActive()).toBe(false);
+        const afterFirst = cloud.registerCalls.length;
+
+        // The cloud comes back.
+        cloud.registerError = null;
+        await vi.advanceTimersByTimeAsync(6_000);
+
+        expect(
+          cloud.registerCalls.length,
+          'it tried again without anybody restarting the node',
+        ).toBeGreaterThan(afterFirst);
+        expect(layer.isActive(), 'and activated once it got through').toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('registers as the SAME node, so the retry adds no second identity', async () => {
+      vi.useFakeTimers();
+      try {
+        cloud.registerError = new Error('nope');
+        await layer.start(testIdentity());
+        cloud.registerError = null;
+        await vi.advanceTimersByTimeAsync(6_000);
+        const ids = new Set(cloud.registerCalls.map((c) => c.info.nodeId));
+        expect(ids.size, 'one identity, however many attempts').toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('backs off, so an hour of downtime is not thousands of requests', async () => {
+      vi.useFakeTimers();
+      try {
+        cloud.registerError = new Error('still down');
+        await layer.start(testIdentity());
+        await vi.advanceTimersByTimeAsync(120_000);
+        // Two minutes of a dead cloud at a 5s floor doubling to a 60s ceiling
+        // is a handful of attempts, not twenty-four.
+        expect(cloud.registerCalls.length).toBeLessThan(8);
+        expect(cloud.registerCalls.length).toBeGreaterThan(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does nothing if the layer became active while the retry waited', async () => {
+      // A pending retry and a layer that started by another route: the retry
+      // must not register a second time for a node that is already in. The
+      // timer is deliberately not cancelled on success — the guard is what
+      // makes that safe, so the guard is what is tested.
+      vi.useFakeTimers();
+      try {
+        cloud.registerError = new Error('down');
+        await layer.start(testIdentity());
+        cloud.registerError = null;
+
+        // Something else starts it before the retry fires.
+        expect(await layer.start(testIdentity())).toBe(true);
+        const afterStart = cloud.registerCalls.length;
+
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(
+          cloud.registerCalls.length,
+          'the waiting retry registered an already-registered node',
+        ).toBe(afterStart);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('stops retrying once the layer is stopped', async () => {
+      // A retry outliving `stop()` would register a node that has been told to
+      // go away, which is worse than not registering one that wants to stay.
+      vi.useFakeTimers();
+      try {
+        cloud.registerError = new Error('down');
+        await layer.start(testIdentity());
+        await layer.stop();
+        const after = cloud.registerCalls.length;
+        cloud.registerError = null;
+        await vi.advanceTimersByTimeAsync(120_000);
+        expect(cloud.registerCalls.length).toBe(after);
+        expect(layer.isActive()).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

@@ -208,12 +208,33 @@ type Listener = DiscoveryLayerEvents[DiscoveryLayerEventName];
  * (endpoint unreachable, auth error), start() returns false and the
  * NetworkManager falls through to the Static layer (Try 3).
  */
+/**
+ * How soon the first registration retry happens.
+ *
+ * Short on purpose: the case this exists for is a cloud that is restarting,
+ * which is measured in seconds. A node that came up two seconds early should
+ * not wait minutes to join the register it is entitled to be in.
+ */
+const RETRY_MIN_MS = 5_000;
+
+/**
+ * The longest a registration retry ever waits.
+ *
+ * A cloud that has been down for an hour should cost a handful of requests,
+ * not thousands — and should still be noticed within a minute of coming back.
+ */
+const RETRY_MAX_MS = 60_000;
+
 export class CloudLayer implements DiscoveryLayer {
   readonly name = 'cloud';
 
   private _active = false;
   private _identity: NodeIdentity | null = null;
   private _pollTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Pending registration retry, when the first attempt did not get through. */
+  private _retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** How long the next retry waits. Doubles, capped at {@link RETRY_MAX_MS}. */
+  private _retryDelayMs = 0;
   private _peers = new Map<NodeId, NodeInfo>();
   private _assignedHub: NodeId | null = null;
 
@@ -286,7 +307,25 @@ export class CloudLayer implements DiscoveryLayer {
         this._config.tenantId,
       );
     } catch {
-      // Cloud unreachable — fall through to static
+      // **Unreachable now is not unreachable for ever.**
+      //
+      // This returned `false` and stopped, which is right about the immediate
+      // question — the node must not block on the cloud, so it falls through
+      // to broadcast and works. It was wrong about every moment after: the
+      // only code that retries registration lives in `_poll()`, and `_poll()`
+      // never runs unless `start()` reached the end. So one failed call left
+      // the layer dead for the life of the process, and the node stayed
+      // invisible to the Coordinator while syncing perfectly over the LAN —
+      // the state nothing complains about, because everything works.
+      //
+      // Seen on 2026-09-29: a workstation booted in the three seconds its
+      // platform took to restart, got `503` from `/register`, and was still
+      // absent from the tenant's topology hours later.
+      //
+      // So: still `false`, and still falling through to broadcast — and a
+      // retry left running behind it. When the cloud answers, the layer
+      // activates itself and the node appears where it belongs.
+      this._scheduleRegisterRetry(identity);
       return false;
     }
 
@@ -314,12 +353,58 @@ export class CloudLayer implements DiscoveryLayer {
     return true;
   }
 
+  /**
+   * Keeps trying to register, in the background, until it works.
+   *
+   * Backs off from {@link RETRY_MIN_MS} to {@link RETRY_MAX_MS} so a cloud
+   * that is down for an hour costs a handful of requests rather than
+   * thousands, and so a cloud that is merely restarting is picked up within
+   * seconds rather than at the next reboot of this node.
+   *
+   * `unref`'d: a node must not be held alive by its wish to be registered.
+   * @param identity - Who to register as. The SAME identity `start` was given,
+   *   so a successful retry puts this node in the register once, not twice.
+   */
+  private _scheduleRegisterRetry(identity: NodeIdentity): void {
+    if (this._retryTimer !== null) return;
+    this._retryDelayMs = Math.min(
+      Math.max(this._retryDelayMs * 2, RETRY_MIN_MS),
+      RETRY_MAX_MS,
+    );
+    const timer = setTimeout(() => {
+      this._retryTimer = null;
+      void this._retryRegister(identity);
+    }, this._retryDelayMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this._retryTimer = timer;
+  }
+
+  /**
+   * One retry attempt. On success the layer starts for real.
+   * @param identity - Who to register as.
+   */
+  private async _retryRegister(identity: NodeIdentity): Promise<void> {
+    // Stopped, or started some other way, while this was waiting.
+    if (this._active || this._config?.enabled !== true) return;
+    const started = await this.start(identity);
+    if (!started && this._config?.enabled === true) {
+      this._scheduleRegisterRetry(identity);
+    }
+  }
+
   /** Stop the layer and clean up resources */
   async stop(): Promise<void> {
     if (this._pollTimer) {
       clearTimeout(this._pollTimer);
       this._pollTimer = null;
     }
+    // A retry outliving `stop()` would register a node that has been told to
+    // go away, which is worse than not registering one that wants to stay.
+    if (this._retryTimer) {
+      clearTimeout(this._retryTimer);
+      this._retryTimer = null;
+    }
+    this._retryDelayMs = 0;
 
     // Emit peer-lost for all known peers before cleanup
     if (this._active) {
