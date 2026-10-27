@@ -521,6 +521,59 @@ describe('NetworkManager', () => {
       );
     });
 
+    it('signs the one-shot probe it reports with its own id, probing off', async () => {
+      // Probing off, the scheduler never started, and the one probe of a
+      // peer heard by broadcast reached the cloud with an empty fromNodeId:
+      // a report the coordinator cannot place, so it counted for nobody.
+      const udp = new MockUdpHub();
+      const cloud = new MockCloudService();
+      manager = new NetworkManager(
+        testConfig({
+          broadcast: { enabled: true, port: 41234, intervalMs: 60000 },
+          probing: { enabled: false },
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+        }),
+        {
+          probeFn: async (_h, _p, fromNodeId, toNodeId) => ({
+            fromNodeId,
+            toNodeId,
+            reachable: true,
+            latencyMs: 1,
+            measuredAt: Date.now(),
+          }),
+          broadcastDeps: {
+            createSocket: udp.createSocketFn(),
+            selfTestTimeoutMs: 50,
+          },
+          cloudDeps: createMockCloudDeps(cloud),
+        },
+      );
+      await manager.start();
+
+      const socket = udp.createSocket();
+      await socket.bind(41234);
+      const peer: NodeInfo = {
+        nodeId: 'broadcast-peer',
+        hostname: 'peer',
+        localIps: ['10.0.0.2'],
+        domain: 'test-domain',
+        port: 4001,
+        startedAt: 1_000,
+      };
+      udp.broadcast(Buffer.from(JSON.stringify(peer)), 41234, socket);
+
+      await vi.waitFor(() => {
+        expect(cloud.reportedProbes.flat()).toHaveLength(1);
+      });
+      expect(cloud.reportedProbes.flat()[0]!.fromNodeId).toBe(
+        manager.getIdentity().nodeId,
+      );
+    });
+
     it('probes a restarted peer where it is now', async () => {
       // The probe list held the peer's first report until some other peer
       // joined or left, so a peer back on a new address was probed where

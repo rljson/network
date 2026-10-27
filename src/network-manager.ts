@@ -203,6 +203,9 @@ export class NetworkManager {
     });
 
     this._peerTable.setSelfId(this._identity.nodeId);
+    // Who probes — with probing off too, where the scheduler never starts
+    // and only the one-shot probe of a peer heard by broadcast runs.
+    this._probeScheduler.setSelfId(this._identity.nodeId);
     // Domain isolation: peers from other domains are never merged, so nodes
     // in different domains don't discover each other and election only ever
     // considers same-domain candidates.

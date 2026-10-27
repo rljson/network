@@ -151,7 +151,11 @@ probing of all known peers:
   the counter immediately. This prevents flapping on transient network glitches.
 - **No false alerts**: first probe sets baseline, subsequent probes detect
   changes
-- `runOnce()` — manual single cycle for deterministic test control
+- `runOnce()` — manual single cycle for deterministic test control, and the
+  one-shot probe of a peer heard by broadcast with probing off
+- `setSelfId()` — who probes, for a scheduler that is never started: the
+  NetworkManager sets it on start, so a one-shot probe reported to the cloud
+  carries this node's id instead of an empty `fromNodeId`
 - Events: `'probes-updated'`, `'peer-unreachable'`, `'peer-reachable'`
 
 ### ProbeListener

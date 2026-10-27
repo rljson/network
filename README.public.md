@@ -431,6 +431,10 @@ scheduler.on('peer-reachable', (nodeId, probe) => {
 // Manual single cycle (useful for tests)
 const results = await scheduler.runOnce();
 
+// Single cycles without ever starting: say who probes, or the probes
+// carry an empty fromNodeId
+scheduler.setSelfId('my-node-id');
+
 scheduler.stop();
 ```
 

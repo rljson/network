@@ -157,6 +157,21 @@ describe('ProbeScheduler', () => {
       expect(calls).toContain('peer-a');
     });
 
+    it('signs one-shot probes with the id it was given, never started', async () => {
+      // A scheduler that only ever runs once — probing off — had no id to
+      // sign with, and its probes said nobody took them.
+      const { fn, calls } = mockProbeFn(new Map([['peer-a', true]]));
+      scheduler = new ProbeScheduler({ probeFn: fn, intervalMs: 60000 });
+
+      scheduler.setSelfId('self');
+      scheduler.setPeers([makeNode('self', 3000), makeNode('peer-a', 3001)]);
+      const probes = await scheduler.runOnce();
+
+      expect(scheduler.isRunning()).toBe(false);
+      expect(calls).toEqual(['peer-a']);
+      expect(probes.map((p) => p.fromNodeId)).toEqual(['self']);
+    });
+
     it('stores probes and retrieves them', async () => {
       const results = new Map([['peer-a', true]]);
       const { fn } = mockProbeFn(results);
