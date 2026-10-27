@@ -232,6 +232,15 @@ getAssignedHub() → string | null     // Hub dictated by this layer
 on/off          → event subscription // peer-discovered, peer-lost, hub-assigned
 ```
 
+`peer-discovered` announces a new peer **and** a known peer whose report
+changed — a restart (`startedAt`), a new port, address or host name
+(`nodeInfoChanged()` in `src/types/node-info.ts`). A repeat of the same report
+is not announced again. A restart keeps the node id, so a layer that announced
+only new ids left the PeerTable — and every election — on the start of a
+process that was gone: the survivor handed the hub to the restarted node as
+"started earlier", the restarted node knew better and deferred back, and
+neither was hub.
+
 ### ManualLayer
 
 - **Always present**, cannot be disabled
@@ -295,7 +304,9 @@ Merged view of all peers from all discovery layers:
 
 - **Deduplication by nodeId** — same peer from multiple layers appears once
 - **Per-layer tracking** via `_layerPeers` map for correct removal semantics
-- `peer-joined` fires only when a genuinely **new** peer is first seen
+- `peer-joined` fires only when a genuinely **new** peer is first seen;
+  every report a layer announces replaces the stored one, so a restarted
+  peer is elected with its new `startedAt`
 - `peer-left` fires only when **all** layers have lost the peer
 - `setSelfId()` excludes own node from the peer table
 - `setSelfDomain()` enforces **domain isolation** — peers whose `domain`

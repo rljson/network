@@ -274,5 +274,30 @@ describe('E2E: Two-hub race', () => {
         coordinator = new Coordinator();
       }
     });
+
+    it('keeps one hub when the hub restarts alone', async () => {
+      // The hub's machine goes down with its host server, and comes back on
+      // the same port and identity while the other machine took over.
+      const dirA = identityDir();
+      const hostA = await hostServer();
+      const a = machine(dirA, hostA.port, 'without listener');
+      await a.start();
+      await settle(600);
+      const b = machine(identityDir(), (await host()).port, 'without listener');
+      await b.start();
+      await settle(1_000);
+      expect(roles(a, b)).toEqual(['hub', 'client']);
+
+      await a.stop();
+      await hostA.stop();
+      await settle(1_500);
+      expect(roles(b)).toEqual(['hub']);
+
+      const a2 = machine(dirA, (await host(hostA.port)).port, 'without listener');
+      await a2.start();
+      await settle(1_000);
+
+      expect(roles(a2, b)).toEqual(['client', 'hub']);
+    });
   });
 });
