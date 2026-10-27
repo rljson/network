@@ -1056,6 +1056,22 @@ describe('NetworkManager', () => {
         });
       });
 
+    /** A host's own server, holding a free port whatever this node's role. */
+    const hostServer = (): Promise<{
+      port: number;
+      stop: () => Promise<void>;
+    }> =>
+      new Promise((resolve, reject) => {
+        const server = createServer((socket) => socket.destroy());
+        server.once('error', reject);
+        server.listen(0, '0.0.0.0', () => {
+          resolve({
+            port: (server.address() as AddressInfo).port,
+            stop: () => new Promise<void>((res) => server.close(() => res())),
+          });
+        });
+      });
+
     const probePort = (): number => manager.getIdentity().toNodeInfo().port;
 
     it('stops the probe listener while hub and restarts it after', async () => {
@@ -1091,6 +1107,33 @@ describe('NetworkManager', () => {
       manager.assignHub(selfId);
       manager.assignHub('some-other-hub');
       expect(await canConnect(port)).toBe(false);
+    });
+
+    it('probes but leaves the port to the host when `listen` is false', async () => {
+      // A host that keeps its own server on the port on every node, whatever
+      // the node's role. A probe listener on that port failed the start.
+      const host = await hostServer();
+      servers.push(host);
+
+      manager = new NetworkManager(
+        testConfig({
+          port: host.port,
+          probing: { enabled: true, listen: false, intervalMs: 60000 },
+        }),
+      );
+      await manager.start();
+
+      // Probes run, and peers are told to probe the host's port
+      expect(manager.getProbeScheduler().isRunning()).toBe(true);
+      expect(probePort()).toBe(host.port);
+
+      // No role ever takes the port: with the host gone, nothing answers
+      await host.stop();
+      servers.length = 0;
+      manager.assignHub(manager.getIdentity().nodeId);
+      manager.assignHub('some-other-hub');
+      await new Promise((r) => setTimeout(r, 80));
+      expect(await canConnect(host.port)).toBe(false);
     });
 
     it('ignores overlapping role changes while a handoff is in flight', async () => {

@@ -54,6 +54,14 @@ export interface ProbingConfig {
   intervalMs?: number;
   /** Probe timeout in ms (default: 2000) */
   timeoutMs?: number;
+  /**
+   * Whether this node binds a probe listener on `port` while it is not hub
+   * (default: true). Set `false` when the host keeps its own server on `port`
+   * on every node, whatever the node's role: that server answers the probes,
+   * and a listener on the same port could not start. Probing itself runs
+   * either way.
+   */
+  listen?: boolean;
 }
 
 /** Full network configuration */

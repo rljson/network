@@ -90,6 +90,26 @@ Crash recovery is unaffected: a crashed hub was previously reachable
 (`hasEverBeenReachable === true`), so it does **not** trigger deferral and the
 survivor self-elects normally.
 
+### A Node That Cannot Probe Cannot Elect
+
+Election runs on probes. With `probing.enabled: false` a node probes a peer
+once — when it first hears it by broadcast — and never again, and a peer it
+learned from the cloud first is never probed at all. Such a node has nothing to
+elect with and takes the cloud's suggestion for good.
+
+On a two-machine site that ends in two hubs: a machine that rejoins alone
+learns its peer from the cloud's register answer, long before the peer's next
+broadcast, so it never probes. The running hub hears the newcomer's broadcast
+first, probes it once and reports it reachable, and keeps itself as incumbent
+on that one probe. A coordinator that ranks by reported reachability names the
+newcomer — the only node anyone has reported — and both machines stay hub.
+`test/e2e/two-hub-race.spec.ts` reproduces it.
+
+A host that holds `port` with its own server on every node, whatever the
+node's role, cannot let the probe listener bind it. It sets
+`probing.listen: false` rather than switching probing off: every node probes
+every peer each cycle, the host's server answers, and election runs as above.
+
 ### Election Implementation
 
 `electHub()` in `src/election/hub-election.ts` is a **pure function** — no
@@ -144,6 +164,8 @@ handshake (the latency measurement) and tear down cleanly.
 - Bound by `NetworkManager` **before** `NodeIdentity.create()` so the
   actual bound port can be propagated into `NodeInfo.port` (callers may
   pass `port: 0` to request an OS-assigned ephemeral port).
+- Never started with `probing.listen: false`: the host's own server holds
+  `port` and answers the probes, and `port` is advertised as configured.
 - No application-level protocol — pure handshake-and-close.
 - Listens on `0.0.0.0` (all interfaces) so peers on any local network
   can reach it.
@@ -165,6 +187,8 @@ exclusive by role:
   and peers would probe the empty-reply stub instead of the real hub.
 - **While this node is NOT the hub**, the probe listener is (re)started on
   the same port so peers still have a TCP target.
+- **With `probing.listen: false`** there is nothing to hand off: the host's
+  own server holds the port in every role, and the check returns at once.
 
 The check is idempotent and self-healing: it only acts on a mismatch
 between the desired state (`role !== 'hub'`) and `probeListener.isRunning()`,

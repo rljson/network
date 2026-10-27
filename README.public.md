@@ -462,6 +462,19 @@ can bind the port and serve probes itself) and **restarts** it once the
 node is no longer the hub. This prevents the hub server from silently
 failing to bind a port still held by the probe listener.
 
+When your application keeps its own server on `port` on **every** node,
+whatever the node's role, set `listen: false`. That server answers the
+probes; `NetworkManager` never binds the port and advertises it as
+configured, while probing and election run as usual:
+
+```typescript
+probing: { enabled: true, listen: false, intervalMs: 10000 },
+```
+
+Do not switch probing off for this. A node that cannot probe has nothing to
+elect with and takes the cloud's suggestion, and on a two-machine site a
+machine that rejoins alone then stays a second hub.
+
 ```typescript
 import { ProbeListener } from '@rljson/network';
 
