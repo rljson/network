@@ -307,6 +307,9 @@ Merged view of all peers from all discovery layers:
 - `peer-joined` fires only when a genuinely **new** peer is first seen;
   every report a layer announces replaces the stored one, so a restarted
   peer is elected with its new `startedAt`
+- `peer-updated` fires when a known peer's report changed (a restart, a new
+  address); the NetworkManager then hands the probe scheduler the new report
+  — it probed the first address until some other peer joined or left
 - `peer-left` fires only when **all** layers have lost the peer
 - `setSelfId()` excludes own node from the peer table
 - `setSelfDomain()` enforces **domain isolation** — peers whose `domain`
@@ -339,7 +342,8 @@ Central orchestrator — the main public API:
   `broadcastDeps`, and `cloudDeps` for testing
 - Emits events: `topology-changed`, `role-changed`, `hub-changed`,
   `peer-joined`, `peer-left`
-- Continuous re-evaluation: any peer/hub change or probe update triggers
+- Continuous re-evaluation: any peer/hub change — including a known peer's
+  changed report (`peer-updated`) — or probe update triggers
   `_recomputeTopology()`
 - `getProbeScheduler()` provides public access for advanced usage
 

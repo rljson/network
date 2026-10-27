@@ -25,6 +25,7 @@ import type {
   CloudHttpClient,
   CloudPeerListResponse,
 } from '../src/layers/cloud-layer';
+import { MockUdpHub } from './helpers/mock-udp.ts';
 
 // .............................................................................
 
@@ -517,6 +518,57 @@ describe('NetworkManager', () => {
       expect(topology.probes.length).toBeGreaterThan(0);
       expect(topology.probes[0]!.toNodeId).toBe(
         'static-hub-192.168.1.100:3000',
+      );
+    });
+
+    it('probes a restarted peer where it is now', async () => {
+      // The probe list held the peer's first report until some other peer
+      // joined or left, so a peer back on a new address was probed where
+      // it no longer was.
+      const udp = new MockUdpHub();
+      const probedPorts: number[] = [];
+      manager = new NetworkManager(
+        testConfig({
+          broadcast: { enabled: true, port: 41234, intervalMs: 60000 },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        {
+          probeFn: async (_h, port, fromNodeId, toNodeId) => {
+            probedPorts.push(port);
+            return {
+              fromNodeId,
+              toNodeId,
+              reachable: true,
+              latencyMs: 1,
+              measuredAt: Date.now(),
+            };
+          },
+          broadcastDeps: {
+            createSocket: udp.createSocketFn(),
+            selfTestTimeoutMs: 50,
+          },
+        },
+      );
+      await manager.start();
+
+      const socket = udp.createSocket();
+      await socket.bind(41234);
+      const peer: NodeInfo = {
+        nodeId: 'restarting-peer',
+        hostname: 'peer',
+        localIps: ['10.0.0.2'],
+        domain: 'test-domain',
+        port: 4001,
+        startedAt: 1_000,
+      };
+      const restarted = { ...peer, port: 4002, startedAt: 2_000 };
+      udp.broadcast(Buffer.from(JSON.stringify(peer)), 41234, socket);
+      udp.broadcast(Buffer.from(JSON.stringify(restarted)), 41234, socket);
+
+      await manager.getProbeScheduler().runOnce();
+      expect(probedPorts.at(-1)).toBe(4002);
+      expect(manager.getTopology().nodes['restarting-peer']!.startedAt).toBe(
+        2_000,
       );
     });
 

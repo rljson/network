@@ -237,6 +237,17 @@ export class NetworkManager {
       }
       this._recomputeTopology();
     });
+    this._peerTable.on('peer-updated', (peer) => {
+      this._log(
+        'peer',
+        `Updated: ${peer.hostname} (${peer.nodeId.slice(0, 8)}...) ` +
+          `[${peer.localIps.join(', ')}]:${peer.port}, ` +
+          `startedAt: ${new Date(peer.startedAt).toISOString()}`,
+      );
+      // Probe the peer where it is now, and elect with its new start
+      this._probeScheduler.setPeers(this._peerTable.getPeers());
+      this._recomputeTopology();
+    });
     this._peerTable.on('peer-left', (nodeId) => {
       this._log('peer', `Left: ${nodeId.slice(0, 8)}...`);
       this._emit('peer-left', nodeId);

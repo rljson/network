@@ -6,6 +6,7 @@
 
 // .............................................................................
 
+import { nodeInfoChanged } from './types/node-info.ts';
 import type { NodeId, NodeInfo } from './types/node-info.ts';
 import type { DiscoveryLayer } from './layers/discovery-layer.ts';
 
@@ -14,6 +15,8 @@ import type { DiscoveryLayer } from './layers/discovery-layer.ts';
 /** Events emitted by PeerTable */
 export interface PeerTableEvents {
   'peer-joined': (peer: NodeInfo) => void;
+  /** A known peer's report changed: a restart, or a new address */
+  'peer-updated': (peer: NodeInfo) => void;
   'peer-left': (nodeId: string) => void;
 }
 
@@ -26,7 +29,8 @@ type PeerTableListener = PeerTableEvents[PeerTableEventName];
  * Merged view of all peers from all discovery layers.
  *
  * Deduplicates by nodeId — a peer known by multiple layers appears once.
- * Emits `peer-joined`/`peer-left` when the merged set changes.
+ * Emits `peer-joined`/`peer-left` when the merged set changes, and
+ * `peer-updated` when a known peer's report changes.
  */
 export class PeerTable {
   /** All known peers, keyed by nodeId */
@@ -162,11 +166,13 @@ export class PeerTable {
     const layerSet = this._layerPeers.get(layerName)!;
     layerSet.add(peer.nodeId);
 
-    const isNew = !this._peers.has(peer.nodeId);
+    const known = this._peers.get(peer.nodeId);
     this._peers.set(peer.nodeId, peer); // update with latest info
 
-    if (isNew) {
+    if (!known) {
       this._emit('peer-joined', peer);
+    } else if (nodeInfoChanged(known, peer)) {
+      this._emit('peer-updated', peer);
     }
   }
 
