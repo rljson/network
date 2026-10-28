@@ -11,6 +11,7 @@ import {
   type Socket as DgramSocket,
 } from 'node:dgram';
 
+import { nodeInfoChanged } from '../types/node-info.ts';
 import type { NodeId, NodeInfo } from '../types/node-info.ts';
 import type { BroadcastConfig } from '../types/network-config.ts';
 import type { NodeIdentity } from '../identity/node-identity.ts';
@@ -384,11 +385,12 @@ export class BroadcastLayer implements DiscoveryLayer {
       return; // Never add self to peer table
     }
 
-    // Add or update peer
-    const isNew = !this._peers.has(packet.nodeId);
+    // Add or update peer. A known peer is reported again when its report
+    // changed — a restart, or a new address — never for a mere repeat.
+    const known = this._peers.get(packet.nodeId);
     this._peers.set(packet.nodeId, { info: packet, lastSeen: Date.now() });
 
-    if (isNew) {
+    if (!known || nodeInfoChanged(known.info, packet)) {
       this._emit('peer-discovered', packet);
     }
   }

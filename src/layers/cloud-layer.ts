@@ -6,6 +6,7 @@
 
 // .............................................................................
 
+import { nodeInfoChanged } from '../types/node-info.ts';
 import type { NodeId, NodeInfo } from '../types/node-info.ts';
 import type { CloudConfig } from '../types/network-config.ts';
 import type { NodeIdentity } from '../identity/node-identity.ts';
@@ -635,10 +636,12 @@ export class CloudLayer implements DiscoveryLayer {
       if (peer.domain !== this._identity?.domain) continue;
 
       newPeerIds.add(peer.nodeId);
-      const isNew = !this._peers.has(peer.nodeId);
+      // A known peer is reported again when the cloud's record of it
+      // changed — it registered anew after a restart, or moved.
+      const known = this._peers.get(peer.nodeId);
       this._peers.set(peer.nodeId, peer);
 
-      if (isNew) {
+      if (!known || nodeInfoChanged(known, peer)) {
         this._emit('peer-discovered', peer);
       }
     }

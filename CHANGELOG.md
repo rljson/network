@@ -1,6 +1,45 @@
 # Changelog
 
-## [Unreleased]
+## [0.0.25]
+
+**A machine that rejoined its site alone became a second hub — and a hub that
+restarted alone could leave its site with none.**
+
+Both seen on a lab of two-machine sites whose host keeps its own server on the
+hub port of every machine, whatever the machine's role. Such a host could only
+switch probing off, because the probe listener could not bind the port — and a
+node that cannot probe has nothing to elect with: it takes the cloud's word.
+
+A machine that rejoined alone learned its peer from the cloud's register
+answer, long before the peer's next broadcast, so it never probed. The running
+hub heard the newcomer's broadcast first, probed it once, reported it
+reachable, and kept itself as incumbent on that one probe. The coordinator,
+ranking by reported reachability, named the newcomer — the only node anyone had
+reported. Two hubs, for good, and nothing on either machine said so.
+
+### What changed
+
+- **`probing.listen: false`.** Probing and election run every cycle while the
+  host's own server holds the port: the listener is never started, and the port
+  is advertised as configured. `test/e2e/two-hub-race.spec.ts` reproduces the
+  split with real network managers, real TCP probes and host servers, and shows
+  one hub when a machine joins alone, when both start together, and when the
+  hub restarts alone.
+- **A restarted peer is reported again.** A restart keeps the node id and moves
+  `startedAt`. The broadcast and cloud layers announced an id only once, so
+  every election kept the start of a process that was gone: when a hub
+  restarted alone, the survivor handed the hub back to it as "started earlier",
+  while the restarted node, knowing its real start, deferred to the survivor —
+  no hub at all. Layers now announce a known peer again when its report changed
+  (`nodeInfoChanged`), the peer table emits `peer-updated`, and the network
+  manager probes the peer where it is now.
+- **One-shot probes say who took them.** With probing off the scheduler never
+  started, so the one probe of a peer heard by broadcast reached the cloud with
+  an empty `fromNodeId` — dropped by a coordinator that joins probe rows to
+  registered nodes. The network manager now sets the id on start
+  (`ProbeScheduler.setSelfId()`).
+
+Every change came with a test that failed before it.
 
 ### Releases go through gg
 

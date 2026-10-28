@@ -25,6 +25,7 @@ import type {
   CloudHttpClient,
   CloudPeerListResponse,
 } from '../src/layers/cloud-layer';
+import { MockUdpHub } from './helpers/mock-udp.ts';
 
 // .............................................................................
 
@@ -517,6 +518,110 @@ describe('NetworkManager', () => {
       expect(topology.probes.length).toBeGreaterThan(0);
       expect(topology.probes[0]!.toNodeId).toBe(
         'static-hub-192.168.1.100:3000',
+      );
+    });
+
+    it('signs the one-shot probe it reports with its own id, probing off', async () => {
+      // Probing off, the scheduler never started, and the one probe of a
+      // peer heard by broadcast reached the cloud with an empty fromNodeId:
+      // a report the coordinator cannot place, so it counted for nobody.
+      const udp = new MockUdpHub();
+      const cloud = new MockCloudService();
+      manager = new NetworkManager(
+        testConfig({
+          broadcast: { enabled: true, port: 41234, intervalMs: 60000 },
+          probing: { enabled: false },
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+        }),
+        {
+          probeFn: async (_h, _p, fromNodeId, toNodeId) => ({
+            fromNodeId,
+            toNodeId,
+            reachable: true,
+            latencyMs: 1,
+            measuredAt: Date.now(),
+          }),
+          broadcastDeps: {
+            createSocket: udp.createSocketFn(),
+            selfTestTimeoutMs: 50,
+          },
+          cloudDeps: createMockCloudDeps(cloud),
+        },
+      );
+      await manager.start();
+
+      const socket = udp.createSocket();
+      await socket.bind(41234);
+      const peer: NodeInfo = {
+        nodeId: 'broadcast-peer',
+        hostname: 'peer',
+        localIps: ['10.0.0.2'],
+        domain: 'test-domain',
+        port: 4001,
+        startedAt: 1_000,
+      };
+      udp.broadcast(Buffer.from(JSON.stringify(peer)), 41234, socket);
+
+      await vi.waitFor(() => {
+        expect(cloud.reportedProbes.flat()).toHaveLength(1);
+      });
+      expect(cloud.reportedProbes.flat()[0]!.fromNodeId).toBe(
+        manager.getIdentity().nodeId,
+      );
+    });
+
+    it('probes a restarted peer where it is now', async () => {
+      // The probe list held the peer's first report until some other peer
+      // joined or left, so a peer back on a new address was probed where
+      // it no longer was.
+      const udp = new MockUdpHub();
+      const probedPorts: number[] = [];
+      manager = new NetworkManager(
+        testConfig({
+          broadcast: { enabled: true, port: 41234, intervalMs: 60000 },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        {
+          probeFn: async (_h, port, fromNodeId, toNodeId) => {
+            probedPorts.push(port);
+            return {
+              fromNodeId,
+              toNodeId,
+              reachable: true,
+              latencyMs: 1,
+              measuredAt: Date.now(),
+            };
+          },
+          broadcastDeps: {
+            createSocket: udp.createSocketFn(),
+            selfTestTimeoutMs: 50,
+          },
+        },
+      );
+      await manager.start();
+
+      const socket = udp.createSocket();
+      await socket.bind(41234);
+      const peer: NodeInfo = {
+        nodeId: 'restarting-peer',
+        hostname: 'peer',
+        localIps: ['10.0.0.2'],
+        domain: 'test-domain',
+        port: 4001,
+        startedAt: 1_000,
+      };
+      const restarted = { ...peer, port: 4002, startedAt: 2_000 };
+      udp.broadcast(Buffer.from(JSON.stringify(peer)), 41234, socket);
+      udp.broadcast(Buffer.from(JSON.stringify(restarted)), 41234, socket);
+
+      await manager.getProbeScheduler().runOnce();
+      expect(probedPorts.at(-1)).toBe(4002);
+      expect(manager.getTopology().nodes['restarting-peer']!.startedAt).toBe(
+        2_000,
       );
     });
 
@@ -1056,6 +1161,22 @@ describe('NetworkManager', () => {
         });
       });
 
+    /** A host's own server, holding a free port whatever this node's role. */
+    const hostServer = (): Promise<{
+      port: number;
+      stop: () => Promise<void>;
+    }> =>
+      new Promise((resolve, reject) => {
+        const server = createServer((socket) => socket.destroy());
+        server.once('error', reject);
+        server.listen(0, '0.0.0.0', () => {
+          resolve({
+            port: (server.address() as AddressInfo).port,
+            stop: () => new Promise<void>((res) => server.close(() => res())),
+          });
+        });
+      });
+
     const probePort = (): number => manager.getIdentity().toNodeInfo().port;
 
     it('stops the probe listener while hub and restarts it after', async () => {
@@ -1091,6 +1212,33 @@ describe('NetworkManager', () => {
       manager.assignHub(selfId);
       manager.assignHub('some-other-hub');
       expect(await canConnect(port)).toBe(false);
+    });
+
+    it('probes but leaves the port to the host when `listen` is false', async () => {
+      // A host that keeps its own server on the port on every node, whatever
+      // the node's role. A probe listener on that port failed the start.
+      const host = await hostServer();
+      servers.push(host);
+
+      manager = new NetworkManager(
+        testConfig({
+          port: host.port,
+          probing: { enabled: true, listen: false, intervalMs: 60000 },
+        }),
+      );
+      await manager.start();
+
+      // Probes run, and peers are told to probe the host's port
+      expect(manager.getProbeScheduler().isRunning()).toBe(true);
+      expect(probePort()).toBe(host.port);
+
+      // No role ever takes the port: with the host gone, nothing answers
+      await host.stop();
+      servers.length = 0;
+      manager.assignHub(manager.getIdentity().nodeId);
+      manager.assignHub('some-other-hub');
+      await new Promise((r) => setTimeout(r, 80));
+      expect(await canConnect(host.port)).toBe(false);
     });
 
     it('ignores overlapping role changes while a handoff is in flight', async () => {

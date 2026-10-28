@@ -364,6 +364,39 @@ describe('CloudLayer', () => {
       vi.useRealTimers();
     });
 
+    it('reports a known peer again when it restarted', async () => {
+      vi.useFakeTimers();
+      const pollLayer = new CloudLayer(
+        {
+          enabled: true,
+          endpoint: 'https://cloud.example.com',
+          pollIntervalMs: 100,
+        },
+        { createHttpClient: () => cloud },
+      );
+
+      const peer = fakePeer('restarting-peer');
+      cloud.nextResponse = { peers: [peer], assignedHub: null };
+      await pollLayer.start(testIdentity());
+
+      const discovered: NodeInfo[] = [];
+      pollLayer.on('peer-discovered', (p) => discovered.push(p));
+
+      // The same peer again: nothing to report
+      await vi.advanceTimersByTimeAsync(100);
+      expect(discovered).toHaveLength(0);
+
+      // Registered anew after a restart: reported with its new start
+      const restarted = { ...peer, startedAt: peer.startedAt + 60_000 };
+      cloud.nextResponse = { peers: [restarted], assignedHub: null };
+      await vi.advanceTimersByTimeAsync(100);
+      expect(discovered.map((p) => p.startedAt)).toEqual([restarted.startedAt]);
+      expect(pollLayer.getPeers()[0]!.startedAt).toBe(restarted.startedAt);
+
+      await pollLayer.stop();
+      vi.useRealTimers();
+    });
+
     it('drops peers from a different domain', async () => {
       vi.useFakeTimers();
       const pollLayer = new CloudLayer(

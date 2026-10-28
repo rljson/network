@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { exampleNodeInfo } from '../../src/types/node-info';
+import { exampleNodeInfo, nodeInfoChanged } from '../../src/types/node-info';
 import type { NodeInfo, NodeId } from '../../src/types/node-info';
 
 describe('NodeInfo', () => {
@@ -34,5 +34,38 @@ describe('NodeInfo', () => {
       startedAt: 123456,
     };
     expect(info.localIps).toHaveLength(2);
+  });
+
+  describe('nodeInfoChanged', () => {
+    const report = (changes: Partial<NodeInfo>): NodeInfo => ({
+      ...exampleNodeInfo,
+      localIps: [...exampleNodeInfo.localIps],
+      ...changes,
+    });
+
+    it('is false for the same report again', () => {
+      expect(nodeInfoChanged(exampleNodeInfo, report({}))).toBe(false);
+    });
+
+    it('sees a restart', () => {
+      const startedAt = exampleNodeInfo.startedAt + 60_000;
+      expect(nodeInfoChanged(exampleNodeInfo, report({ startedAt }))).toBe(true);
+    });
+
+    it('sees a new port', () => {
+      expect(nodeInfoChanged(exampleNodeInfo, report({ port: 3001 }))).toBe(true);
+    });
+
+    it('sees a new host name', () => {
+      const hostname = 'WORKSTATION-8';
+      expect(nodeInfoChanged(exampleNodeInfo, report({ hostname }))).toBe(true);
+    });
+
+    it('sees an address added or replaced', () => {
+      const added = report({ localIps: ['192.168.1.42', '10.0.0.7'] });
+      const replaced = report({ localIps: ['192.168.1.43'] });
+      expect(nodeInfoChanged(exampleNodeInfo, added)).toBe(true);
+      expect(nodeInfoChanged(exampleNodeInfo, replaced)).toBe(true);
+    });
   });
 });

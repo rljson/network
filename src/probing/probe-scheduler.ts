@@ -118,6 +118,17 @@ export class ProbeScheduler {
   }
 
   /**
+   * Set who probes, without starting the periodic cycle. A host that only
+   * probes a new peer once (`runOnce()` with probing off) never starts the
+   * scheduler, and its probes went out with an empty `fromNodeId` — a report
+   * the cloud coordinator cannot place.
+   * @param selfId - This node's ID (excluded from probing, signs the probes)
+   */
+  setSelfId(selfId: NodeId): void {
+    this._selfId = selfId;
+  }
+
+  /**
    * Schedule the next probe cycle using setTimeout.
    * Chaining (instead of setInterval) prevents overlapping cycles.
    */

@@ -15,7 +15,11 @@ import type { NodeIdentity } from '../identity/node-identity.ts';
 
 /** Events emitted by a DiscoveryLayer */
 export interface DiscoveryLayerEvents {
-  /** A new peer was discovered */
+  /**
+   * A peer was discovered — or a known peer's report changed (a restart, a
+   * new address), which carries the new report. A repeat of the same report
+   * is not announced again.
+   */
   'peer-discovered': (peer: NodeInfo) => void;
   /** A previously known peer is no longer reachable */
   'peer-lost': (nodeId: string) => void;

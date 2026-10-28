@@ -90,6 +90,26 @@ Crash recovery is unaffected: a crashed hub was previously reachable
 (`hasEverBeenReachable === true`), so it does **not** trigger deferral and the
 survivor self-elects normally.
 
+### A Node That Cannot Probe Cannot Elect
+
+Election runs on probes. With `probing.enabled: false` a node probes a peer
+once — when it first hears it by broadcast — and never again, and a peer it
+learned from the cloud first is never probed at all. Such a node has nothing to
+elect with and takes the cloud's suggestion for good.
+
+On a two-machine site that ends in two hubs: a machine that rejoins alone
+learns its peer from the cloud's register answer, long before the peer's next
+broadcast, so it never probes. The running hub hears the newcomer's broadcast
+first, probes it once and reports it reachable, and keeps itself as incumbent
+on that one probe. A coordinator that ranks by reported reachability names the
+newcomer — the only node anyone has reported — and both machines stay hub.
+`test/e2e/two-hub-race.spec.ts` reproduces it.
+
+A host that holds `port` with its own server on every node, whatever the
+node's role, cannot let the probe listener bind it. It sets
+`probing.listen: false` rather than switching probing off: every node probes
+every peer each cycle, the host's server answers, and election runs as above.
+
 ### Election Implementation
 
 `electHub()` in `src/election/hub-election.ts` is a **pure function** — no
@@ -131,7 +151,11 @@ probing of all known peers:
   the counter immediately. This prevents flapping on transient network glitches.
 - **No false alerts**: first probe sets baseline, subsequent probes detect
   changes
-- `runOnce()` — manual single cycle for deterministic test control
+- `runOnce()` — manual single cycle for deterministic test control, and the
+  one-shot probe of a peer heard by broadcast with probing off
+- `setSelfId()` — who probes, for a scheduler that is never started: the
+  NetworkManager sets it on start, so a one-shot probe reported to the cloud
+  carries this node's id instead of an empty `fromNodeId`
 - Events: `'probes-updated'`, `'peer-unreachable'`, `'peer-reachable'`
 
 ### ProbeListener
@@ -144,6 +168,8 @@ handshake (the latency measurement) and tear down cleanly.
 - Bound by `NetworkManager` **before** `NodeIdentity.create()` so the
   actual bound port can be propagated into `NodeInfo.port` (callers may
   pass `port: 0` to request an OS-assigned ephemeral port).
+- Never started with `probing.listen: false`: the host's own server holds
+  `port` and answers the probes, and `port` is advertised as configured.
 - No application-level protocol — pure handshake-and-close.
 - Listens on `0.0.0.0` (all interfaces) so peers on any local network
   can reach it.
@@ -165,6 +191,8 @@ exclusive by role:
   and peers would probe the empty-reply stub instead of the real hub.
 - **While this node is NOT the hub**, the probe listener is (re)started on
   the same port so peers still have a TCP target.
+- **With `probing.listen: false`** there is nothing to hand off: the host's
+  own server holds the port in every role, and the check returns at once.
 
 The check is idempotent and self-healing: it only acts on a mismatch
 between the desired state (`role !== 'hub'`) and `probeListener.isRunning()`,
@@ -207,6 +235,15 @@ getPeers()      → NodeInfo[]         // Currently known peers
 getAssignedHub() → string | null     // Hub dictated by this layer
 on/off          → event subscription // peer-discovered, peer-lost, hub-assigned
 ```
+
+`peer-discovered` announces a new peer **and** a known peer whose report
+changed — a restart (`startedAt`), a new port, address or host name
+(`nodeInfoChanged()` in `src/types/node-info.ts`). A repeat of the same report
+is not announced again. A restart keeps the node id, so a layer that announced
+only new ids left the PeerTable — and every election — on the start of a
+process that was gone: the survivor handed the hub to the restarted node as
+"started earlier", the restarted node knew better and deferred back, and
+neither was hub.
 
 ### ManualLayer
 
@@ -271,7 +308,12 @@ Merged view of all peers from all discovery layers:
 
 - **Deduplication by nodeId** — same peer from multiple layers appears once
 - **Per-layer tracking** via `_layerPeers` map for correct removal semantics
-- `peer-joined` fires only when a genuinely **new** peer is first seen
+- `peer-joined` fires only when a genuinely **new** peer is first seen;
+  every report a layer announces replaces the stored one, so a restarted
+  peer is elected with its new `startedAt`
+- `peer-updated` fires when a known peer's report changed (a restart, a new
+  address); the NetworkManager then hands the probe scheduler the new report
+  — it probed the first address until some other peer joined or left
 - `peer-left` fires only when **all** layers have lost the peer
 - `setSelfId()` excludes own node from the peer table
 - `setSelfDomain()` enforces **domain isolation** — peers whose `domain`
@@ -304,7 +346,8 @@ Central orchestrator — the main public API:
   `broadcastDeps`, and `cloudDeps` for testing
 - Emits events: `topology-changed`, `role-changed`, `hub-changed`,
   `peer-joined`, `peer-left`
-- Continuous re-evaluation: any peer/hub change or probe update triggers
+- Continuous re-evaluation: any peer/hub change — including a known peer's
+  changed report (`peer-updated`) — or probe update triggers
   `_recomputeTopology()`
 - `getProbeScheduler()` provides public access for advanced usage
 

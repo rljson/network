@@ -256,6 +256,20 @@ describe('PeerTable', () => {
       expect(table.getPeer('node-1')!.localIps).toEqual(['10.0.0.99']);
     });
 
+    it('emits peer-updated when a known peer reports a change', () => {
+      const layer = new MockLayer('layer-a');
+      table.attachLayer(layer);
+      const updated: NodeInfo[] = [];
+      table.on('peer-updated', (peer) => updated.push(peer));
+
+      const peer = testPeer('node-1');
+      layer.addPeer(peer);
+      layer.addPeer({ ...peer, localIps: [...peer.localIps] }); // a repeat
+      layer.addPeer({ ...peer, startedAt: peer.startedAt + 1 }); // a restart
+
+      expect(updated.map((p) => p.startedAt)).toEqual([peer.startedAt + 1]);
+    });
+
     it('excludes self from dynamically discovered peers', () => {
       const layer = new MockLayer('layer-a');
       table.attachLayer(layer);

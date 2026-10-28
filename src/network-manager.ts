@@ -119,8 +119,11 @@ export class NetworkManager {
   private _currentRole: NodeRole = 'unassigned';
   private _formedBy: FormedBy = 'static';
 
-  /** Whether probing (and thus the probe listener) is enabled. Set in start(). */
-  private _probingEnabled = false;
+  /**
+   * Whether this node runs a probe listener: probing is enabled and the host
+   * has not taken the port for itself (`probing.listen`). Set in start().
+   */
+  private _probeListenerEnabled = false;
 
   /**
    * Port the probe listener binds to. It is released for the application's
@@ -175,15 +178,21 @@ export class NetworkManager {
   async start(): Promise<void> {
     if (this._running) return;
 
-    // Bind the probe listener first (if probing is enabled) so that the
+    // Bind the probe listener first (if this node runs one) so that the
     // node's advertised port reflects the actual bound port — important
     // when the caller passes port 0 to request an ephemeral port.
+    //
+    // Without a listener (`probing.listen: false`) the host's own server
+    // holds `port` and answers the probes, so `port` is advertised as is.
+    // Probing still runs: a node that cannot probe has nothing to elect
+    // with and takes the cloud's word, which can name a second hub.
     const probingEnabled = this._config.probing?.enabled !== false;
+    const listen = probingEnabled && this._config.probing?.listen !== false;
     let advertisedPort = this._config.port;
-    if (probingEnabled) {
+    if (listen) {
       advertisedPort = await this._probeListener.start(this._config.port);
     }
-    this._probingEnabled = probingEnabled;
+    this._probeListenerEnabled = listen;
     this._probePort = advertisedPort;
 
     // Create node identity
@@ -194,6 +203,9 @@ export class NetworkManager {
     });
 
     this._peerTable.setSelfId(this._identity.nodeId);
+    // Who probes — with probing off too, where the scheduler never starts
+    // and only the one-shot probe of a peer heard by broadcast runs.
+    this._probeScheduler.setSelfId(this._identity.nodeId);
     // Domain isolation: peers from other domains are never merged, so nodes
     // in different domains don't discover each other and election only ever
     // considers same-domain candidates.
@@ -226,6 +238,17 @@ export class NetworkManager {
       if (broadcastPeers.some((bp) => bp.nodeId === peer.nodeId)) {
         void this._probeScheduler.runOnce();
       }
+      this._recomputeTopology();
+    });
+    this._peerTable.on('peer-updated', (peer) => {
+      this._log(
+        'peer',
+        `Updated: ${peer.hostname} (${peer.nodeId.slice(0, 8)}...) ` +
+          `[${peer.localIps.join(', ')}]:${peer.port}, ` +
+          `startedAt: ${new Date(peer.startedAt).toISOString()}`,
+      );
+      // Probe the peer where it is now, and elect with its new start
+      this._probeScheduler.setPeers(this._peerTable.getPeers());
       this._recomputeTopology();
     });
     this._peerTable.on('peer-left', (nodeId) => {
@@ -869,7 +892,7 @@ export class NetworkManager {
    * closing simply resolves on the next recompute.
    */
   private _ensureProbeListenerState(): void {
-    if (!this._probingEnabled || this._probeListenerBusy) return;
+    if (!this._probeListenerEnabled || this._probeListenerBusy) return;
     const shouldRun = this._currentRole !== 'hub';
     if (shouldRun === this._probeListener.isRunning()) return;
     this._probeListenerBusy = true;

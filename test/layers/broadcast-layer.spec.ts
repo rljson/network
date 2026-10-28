@@ -232,6 +232,27 @@ describe('BroadcastLayer', () => {
       expect(layer.getPeers()).toHaveLength(1);
     });
 
+    it('reports a known peer again when it restarted', async () => {
+      // A restart keeps the node id and moves startedAt. Kept to itself, it
+      // left every peer electing with the start of a process that was gone.
+      const discovered: NodeInfo[] = [];
+      layer.on('peer-discovered', (p) => discovered.push(p));
+
+      const socket = hub.createSocket();
+      await socket.bind(41234);
+      const peer = fakePeer('peer-restarted');
+      const restarted = { ...peer, startedAt: peer.startedAt + 60_000 };
+      hub.broadcast(Buffer.from(JSON.stringify(peer)), 41234, socket);
+      hub.broadcast(Buffer.from(JSON.stringify(restarted)), 41234, socket);
+      hub.broadcast(Buffer.from(JSON.stringify(restarted)), 41234, socket);
+
+      expect(discovered.map((p) => p.startedAt)).toEqual([
+        peer.startedAt,
+        restarted.startedAt,
+      ]);
+      expect(layer.getPeers()[0]!.startedAt).toBe(restarted.startedAt);
+    });
+
     it('filters out peers from different domain', async () => {
       const peer = fakePeer('peer-other', 'other-domain');
       const socket = hub.createSocket();
