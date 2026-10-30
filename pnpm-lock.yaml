@@ -12,8 +12,8 @@ importers:
   .:
     devDependencies:
       '@rljson/dna-rljson':
-        specifier: ^0.3.1
-        version: 0.3.1
+        specifier: ^0.3.2
+        version: 0.3.2
       '@tssuite/helix-js':
         specifier: ^0.5.1
         version: 0.5.1
@@ -274,8 +274,8 @@ packages:
   '@oxc-project/types@0.156.0':
     resolution: {integrity: sha512-1Duyg48TdJNdyhEB8Xn1L36bT9Pv6GUtlKjHxOys8xkaF/rQq3XJE+bAurSK/AgIz5mGFsb77cn9Pb20+WCScw==}
 
-  '@rljson/dna-rljson@0.3.1':
-    resolution: {integrity: sha512-9cFuhq6EuQ6cYcsTgtHy+wGyQxOlg70+rrYkGhezJBOd1pIxYz4g4ZnXgohxYzSoxDvMAB1eINV60MyHTy72Xw==}
+  '@rljson/dna-rljson@0.3.2':
+    resolution: {integrity: sha512-WYR1D9xY3QtsPlm+yvVFnbIBo6eK5+H9WbKVPu3dQnOAHM5W2ZevfHCaCtqYOsM0VeubotvgMbbFSiT4EXrAIw==}
     engines: {node: '>=22'}
 
   '@rolldown/binding-android-arm-eabi@1.2.16':
@@ -1934,7 +1934,7 @@ snapshots:
 
   '@oxc-project/types@0.156.0': {}
 
-  '@rljson/dna-rljson@0.3.1':
+  '@rljson/dna-rljson@0.3.2':
     dependencies:
       '@ggdna/dna-blog': 0.3.0
       '@ggdna/dna-clean-code': 0.3.0

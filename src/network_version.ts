@@ -2,4 +2,4 @@
 // Kept in sync by test/network_version.spec.ts.
 
 /** The version of the `@rljson/network` package. */
-export const networkVersion = '0.0.26';
+export const networkVersion = '0.0.27';
