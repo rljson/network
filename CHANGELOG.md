@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### `resolvePeerAddress`: reach a peer directly
+
+- **`NetworkManager.resolvePeerAddress(nodeId)`** returns a known peer's
+  address (`"ip:port"`), built like the hub address, so a node can connect to
+  another node without going through the hub. It returns null for the node
+  itself, an unknown node, a node without an IP, and a node the probes found
+  unreachable.
+- **`staticHubNodeId(hubAddress)`** names a configured hub the way the static
+  layer does, to pin it with `NetworkManager.assignHub`.
+
 ### CLAUDE.md keeps this repo's own rules
 
 - The rules every rljson repo shares (coverage, pinning, docs, releases,

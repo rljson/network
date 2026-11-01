@@ -405,6 +405,32 @@ export class NetworkManager {
   }
 
   /**
+   * Resolve the address (`"ip:port"`) of a known peer, to connect to it
+   * directly rather than through the hub.
+   *
+   * Built like the hub's address: the peer's first IP and its port. Returns
+   * null for this node itself, for a node the peer table does not know, for
+   * one that announced no IP, and for one the probes found unreachable — an
+   * unprobed peer counts as reachable.
+   * @param nodeId - The peer to resolve
+   * @returns The peer's address, or null
+   */
+  resolvePeerAddress(nodeId: NodeId): string | null {
+    if (this._identity && nodeId === this._identity.nodeId) return null;
+
+    const peer = this._peerTable.getPeer(nodeId);
+    if (!peer) return null;
+
+    const ip = peer.localIps[0];
+    if (ip === undefined) return null;
+
+    const probe = this._probeScheduler.getProbe(nodeId);
+    if (probe !== undefined && !probe.reachable) return null;
+
+    return `${ip}:${peer.port}`;
+  }
+
+  /**
    * Get the probe scheduler for direct access to probe results.
    * @returns The ProbeScheduler instance
    */

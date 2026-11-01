@@ -340,6 +340,9 @@ manager.clearOverride();
 manager.excludeFromElection('node-id', 60_000); // 60 seconds
 manager.isExcludedFromElection('node-id'); // → true
 
+// Address of a known peer, to connect to it directly
+manager.resolvePeerAddress('peer-node-id'); // → '192.168.1.42:3000' or null
+
 await manager.stop();
 ```
 

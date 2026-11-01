@@ -6,7 +6,7 @@
 
 import { describe, expect, it, beforeEach } from 'vitest';
 
-import { StaticLayer } from '../../src/layers/static-layer';
+import { StaticLayer, staticHubNodeId } from '../../src/layers/static-layer';
 import { NodeIdentity } from '../../src/identity/node-identity';
 import type { NodeInfo } from '../../src/types/node-info';
 
@@ -25,6 +25,12 @@ function testIdentity(): NodeIdentity {
 }
 
 // .............................................................................
+
+describe('staticHubNodeId', () => {
+  it('names a configured hub address the way the static layer does', () => {
+    expect(staticHubNodeId('10.0.0.1:3000')).toBe('static-hub-10.0.0.1:3000');
+  });
+});
 
 describe('StaticLayer', () => {
   // .........................................................................

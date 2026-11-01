@@ -85,7 +85,7 @@ export type {
   DiscoveryLayerEvents,
 } from './layers/discovery-layer.ts';
 export { ManualLayer } from './layers/manual-layer.ts';
-export { StaticLayer } from './layers/static-layer.ts';
+export { StaticLayer, staticHubNodeId } from './layers/static-layer.ts';
 
 // Peer Table
 export { PeerTable } from './peer-table.ts';

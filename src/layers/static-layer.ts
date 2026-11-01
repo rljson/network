@@ -19,6 +19,17 @@ import type {
 
 type Listener = DiscoveryLayerEvents[DiscoveryLayerEventName];
 
+// .............................................................................
+/**
+ * The node id the static layer gives a configured hub address — a stand-in,
+ * as the hub's real id is not known yet. Assign it with
+ * `NetworkManager.assignHub` to pin the configured hub.
+ * @param hubAddress - The configured `ip:port`.
+ * @returns The node id.
+ */
+export const staticHubNodeId = (hubAddress: string): NodeId =>
+  `static-hub-${hubAddress}`;
+
 /**
  * Static discovery layer — last resort fallback (Try 3).
  *
@@ -57,7 +68,7 @@ export class StaticLayer implements DiscoveryLayer {
 
     // Generate a deterministic nodeId from the hubAddress
     // (we don't know the real nodeId of the hub yet)
-    this._hubNodeId = `static-hub-${hubAddress}`;
+    this._hubNodeId = staticHubNodeId(hubAddress);
 
     // Parse host:port from hubAddress
     const colonIdx = hubAddress.lastIndexOf(':');
