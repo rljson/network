@@ -457,6 +457,95 @@ describe('NetworkManager', () => {
   });
 
   // .........................................................................
+  // Peer address resolution
+  // .........................................................................
+
+  describe('resolvePeerAddress', () => {
+    /** A cloud-announced peer, to put any NodeInfo into the peer table. */
+    const startWithCloudPeer = async (
+      peer: Partial<NodeInfo>,
+      probeFn?: ProbeFn,
+    ) => {
+      const mock = new MockCloudService();
+      mock.nextResponse = {
+        peers: [
+          {
+            nodeId: 'peer-1',
+            hostname: 'peer',
+            localIps: ['10.0.0.7', '172.16.0.7'],
+            domain: 'test-domain',
+            port: 3000,
+            startedAt: 1700000000000,
+            ...peer,
+          },
+        ],
+        assignedHub: null,
+      };
+      manager = new NetworkManager(
+        testConfig({
+          cloud: {
+            enabled: true,
+            endpoint: 'http://cloud.test',
+            pollIntervalMs: 999999,
+          },
+          probing: { enabled: true, intervalMs: 60000 },
+        }),
+        { cloudDeps: createMockCloudDeps(mock), probeFn },
+      );
+      await manager.start();
+    };
+
+    const probeAnswering =
+      (reachable: boolean): ProbeFn =>
+      async (_h, _p, fromNodeId, toNodeId) => ({
+        fromNodeId,
+        toNodeId,
+        reachable,
+        latencyMs: 1,
+        measuredAt: Date.now(),
+      });
+
+    it('returns the first IP and the port of a known peer', async () => {
+      await startWithCloudPeer({});
+      expect(manager.resolvePeerAddress('peer-1')).toBe('10.0.0.7:3000');
+    });
+
+    it('returns the address of a peer the probes reached', async () => {
+      await startWithCloudPeer({}, probeAnswering(true));
+      await manager.getProbeScheduler().runOnce();
+      expect(manager.resolvePeerAddress('peer-1')).toBe('10.0.0.7:3000');
+    });
+
+    it('returns null for a peer the probes found unreachable', async () => {
+      await startWithCloudPeer({}, probeAnswering(false));
+      await manager.getProbeScheduler().runOnce();
+      expect(manager.resolvePeerAddress('peer-1')).toBeNull();
+    });
+
+    it('returns null for a peer that announced no IP', async () => {
+      await startWithCloudPeer({ localIps: [] });
+      expect(manager.resolvePeerAddress('peer-1')).toBeNull();
+    });
+
+    it('returns null for an unknown node', async () => {
+      await startWithCloudPeer({});
+      expect(manager.resolvePeerAddress('nobody')).toBeNull();
+    });
+
+    it('returns null for this node itself', async () => {
+      manager = new NetworkManager(testConfig());
+      await manager.start();
+      const selfId = manager.getIdentity().nodeId;
+      expect(manager.resolvePeerAddress(selfId)).toBeNull();
+    });
+
+    it('returns null before the node has started', () => {
+      manager = new NetworkManager(testConfig());
+      expect(manager.resolvePeerAddress('peer-1')).toBeNull();
+    });
+  });
+
+  // .........................................................................
   // Probe scheduler integration
   // .........................................................................
 

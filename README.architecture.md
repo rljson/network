@@ -350,6 +350,10 @@ Central orchestrator — the main public API:
   changed report (`peer-updated`) — or probe update triggers
   `_recomputeTopology()`
 - `getProbeScheduler()` provides public access for advanced usage
+- `resolvePeerAddress(nodeId)` resolves any known peer to `"ip:port"`, built
+  like the hub address (first IP, the peer's port), so a node can connect to
+  a peer directly. Null for self, an unknown node, a node without an IP, and
+  a node the probes found unreachable; an unprobed peer counts as reachable
 
 ## Known Limitations (Future Work)
 

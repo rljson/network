@@ -1,0 +1,32 @@
+// @license
+// Copyright (c) rljson
+//
+// Use of this source code is governed by terms that can be
+// found in the LICENSE file in the root of this package.
+
+{
+  // The package name, as declared in pubspec.yaml / package.json.
+  "name": "@rljson/network",
+
+  // 1-2 sentence summary about this repo.
+  "summary": "Self-organizing network topology: peer discovery (broadcast, cloud, static, manual), probing, hub election, role assignment. API: NetworkManager (start/stop, getTopology, assignHub, excludeFromElection, resolvePeerAddress), NodeInfo, NetworkTopology, events.",
+
+  // 1-3 bullet points: the problem space.
+  "domain": [
+    "nodes of a domain find each other without pre-assigned roles or IPs",
+    "one hub per domain: election by reachability and start time, incumbent advantage",
+    "addresses of the hub and of any known peer (ip:port)"
+  ],
+
+  // The repos this one depends on and the repos depending on it.
+  // Keep the reason or the API behind each entry, not just the name.
+  "interfaces": {
+    // "<repo-a>": "why / API"
+    "uses": {},
+
+    // "<repo-b>": "why / API"
+    "usedBy": {
+      "server": "Node: NetworkManager for roles and hub address; resolvePeerAddress for peer reads"
+    }
+  }
+}
