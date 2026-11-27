@@ -4,10 +4,22 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
-import { createServer, type Server, type AddressInfo } from 'node:net';
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import {
+  connect,
+  createServer,
+  Socket,
+  type Server,
+  type AddressInfo,
+} from 'node:net';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
 import { probePeer } from '../../src/probing/peer-prober';
+
+// Wraps connect so that a test can replace it by a socket that never connects
+vi.mock('node:net', async (importOriginal) => {
+  const net = await importOriginal<typeof import('node:net')>();
+  return { ...net, connect: vi.fn(net.connect) };
+});
 
 // .............................................................................
 
@@ -126,9 +138,14 @@ describe('PeerProber', () => {
 
   describe('timeout', () => {
     it('respects custom timeout', async () => {
+      // A socket that never connects. A non-routable address is not enough:
+      // some networks reject it at once with ENETUNREACH.
+      vi.mocked(connect).mockImplementationOnce(((options: {
+        timeout: number;
+      }) => new Socket().setTimeout(options.timeout)) as typeof connect);
+
       const start = performance.now();
 
-      // Use non-routable address to force timeout
       const result = await probePeer(
         '192.0.2.1',
         12345,
