@@ -3,5 +3,4 @@
 # this workspace without touching their published constraints.
 # change-refs-to-pub-dev removes the section again.
 overrides:
-  "@rljson\/dna-rljson": link:../dna_rljson
   "eslint-plugin-tsdoc>@typescript-eslint/utils": "^8.70.0"

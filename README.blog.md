@@ -20,4 +20,4 @@ Add latest posts at the end.
 ## 2026-11-02 — Resolve the address of any peer
 
 - `NetworkManager.resolvePeerAddress(nodeId)` and `staticHubNodeId(hubAddress)`
-- Post: [doc/blog/2026/2026-11-02-resolve-the-address-of-any-peer.md](doc/blog/2026/2026-11-02-resolve-the-address-of-any-peer.md), German: [doc/de/blog/2026/2026-11-02-resolve-the-address-of-any-peer.md](doc/de/blog/2026/2026-11-02-resolve-the-address-of-any-peer.md)
+- Post: [pm/en/2026-Q4/blog/2026-11-02-resolve-the-address-of-any-peer.md](pm/en/2026-Q4/blog/2026-11-02-resolve-the-address-of-any-peer.md), German: [pm/de/2026-Q4/blog/2026-11-02-resolve-the-address-of-any-peer.md](pm/de/2026-Q4/blog/2026-11-02-resolve-the-address-of-any-peer.md)
